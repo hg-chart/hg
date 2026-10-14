@@ -4,21 +4,29 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import os
+import urllib.request
 from datetime import datetime, timedelta
 
 # 设置网页布局
 st.set_page_config(page_title="设备运行数据多文件多时段汇总对比分析系统", layout="wide")
 
-# 完美解决云端 Linux 乱码：自动寻找支持中文的字体
-def get_chinese_font():
-    for f in fm.fontManager.ttflist:
-        name = f.name.lower()
-        if any(k in name for k in ['hei', 'sans', 'dejavu', 'arial unicode', 'wqy', 'droid', 'noto']):
-            return f.name
+# 【核心修复】云端自动下载并注册中文字体，彻底解决方框乱码问题
+@st.cache_resource
+def setup_chinese_font():
+    font_filename = "NotoSansSC-Regular.ttf"
+    if not os.path.exists(font_filename):
+        try:
+            url = "https://github.com/google/fonts/raw/main/ofl/notosanssc/NotoSansSC-Regular.ttf"
+            urllib.request.urlretrieve(url, font_filename)
+        except Exception:
+            pass
+    if os.path.exists(font_filename):
+        fm.fontManager.add_font(font_filename)
+        return fm.FontProperties(fname=font_filename).get_name()
     return 'sans-serif'
 
-chinese_font = get_chinese_font()
-plt.rcParams['font.sans-serif'] = [chinese_font, 'DejaVu Sans', 'Arial Unicode MS', 'sans-serif']
+font_name = setup_chinese_font()
+plt.rcParams['font.sans-serif'] = [font_name, 'DejaVu Sans', 'sans-serif']
 plt.rcParams['axes.unicode_minus'] = False
 
 COLUMN_ALIASES = {
@@ -187,7 +195,7 @@ if uploaded_files:
                         if threshold is not None:
                             df_all = df_all[df_all[load_col] >= threshold].reset_index(drop=True)
 
-                        # 完美的调色板（与桌面端一致：红、绿、蓝、紫等区分不同时段）
+                        # 多时段循环调色板（不同时段展示不同颜色区块）
                         color_palette = [
                             ("#85B2FF", "#1E3F66"),
                             ("#52C41A", "#135200"),
@@ -231,7 +239,7 @@ if uploaded_files:
                             fig, ax1 = plt.subplots(figsize=(14, 8))
                             ax2 = ax1.twinx()
 
-                            # 核心：分段循环画图，确保每个时段都有独立颜色和独立图例
+                            # 分段绘制不同颜色的区块与曲线
                             for name in df_final['period_name'].unique():
                                 mask = df_final['period_name'] == name
                                 subset_x = [x for x, m in zip(x_indices, mask) if m]
@@ -268,7 +276,7 @@ if uploaded_files:
                             fig.subplots_adjust(bottom=0.28)
                             
                             st.pyplot(fig)
-                            st.success("图表生成成功！多时段颜色区分与图例已完美呈现！")
+                            st.success("图表生成成功！中文字体与多时段独立配色已完美呈现！")
 
                     except Exception as err:
                         st.error(f"计算或绘图过程中发生错误: {err}")

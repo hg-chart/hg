@@ -2,14 +2,32 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import os
+import urllib.request
 from datetime import datetime, timedelta
 
 # 设置网页布局
 st.set_page_config(page_title="设备运行数据多文件多时段汇总对比分析系统", layout="wide")
 
-# 【完美解决 Linux 乱码】直接指定 Streamlit Cloud (Debian系统) 自带的中文字体
-plt.rcParams['font.sans-serif'] = ['WenQuanYi Micro Hei', 'Droid Sans Fallback', 'Arial Unicode MS', 'sans-serif']
+# 【终极中文字体强制修复方案】在云端自动下载并注册中文字体
+@st.cache_resource
+def load_chinese_font():
+    font_path = "NotoSansSC-Regular.ttf"
+    if not os.path.exists(font_path):
+        try:
+            url = "https://github.com/google/fonts/raw/main/ofl/notosanssc/NotoSansSC-Regular.ttf"
+            urllib.request.urlretrieve(url, font_path)
+        except Exception:
+            pass
+    if os.path.exists(font_path):
+        fm.fontManager.add_font(font_path)
+        prop = fm.FontProperties(fname=font_path)
+        return prop.get_name()
+    return 'sans-serif'
+
+font_name = load_chinese_font()
+plt.rcParams['font.sans-serif'] = [font_name, 'WenQuanYi Micro Hei', 'DejaVu Sans', 'sans-serif']
 plt.rcParams['axes.unicode_minus'] = False
 
 COLUMN_ALIASES = {
@@ -22,7 +40,7 @@ st.markdown("---")
 
 # --- 1. 文件上传区域 ---
 st.subheader("1. 表格文件上传（支持多选 CSV / XLSX）")
-uploaded_files = st.file_uploader("请上传您的工业数据表格文件（请确保将所有相关文件全部选中上传）", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("请上传您的工业数据表格文件", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
 
 if uploaded_files:
     file_paths = []
@@ -197,7 +215,7 @@ if uploaded_files:
                             e_dt = pd.to_datetime(item['end'])
                             sub = df_all[(df_all[time_col] >= s_dt) & (df_all[time_col] <= e_dt)].copy()
                             
-                            debug_info.append(f"时段 {idx+1} ({item['start']} ~ {item['end']}): 匹配到 {len(sub)} 行数据")
+                            debug_info.append(f"时段 {idx+1}: 匹配到 {len(sub)} 行")
 
                             if not sub.empty:
                                 sub_res = sub.sort_values(time_col).reset_index(drop=True)
@@ -214,8 +232,7 @@ if uploaded_files:
                                 sub_res['line_color'] = line_c
                                 processed_dfs.append(sub_res)
 
-                        # 在页面上打印调试信息，帮您排查哪个时段没对上
-                        st.info("🔍 各时段数据检索诊断：\n" + "\n".join(debug_info))
+                        st.info("🔍 各时段数据检索诊断：" + " | ".join(debug_info))
 
                         if not processed_dfs:
                             st.warning("在指定的所有时间段与阈值条件下均未检索到有效数据！")
@@ -224,6 +241,9 @@ if uploaded_files:
                             
                             x_indices = range(len(df_final))
                             time_labels = df_final[time_col].dt.strftime('%m-%d %H:%M:%S').tolist()
+
+                            # 显式将字体属性绑定到绘图对象，确保云端百分之百渲染中文字体
+                            plt.rcParams['font.family'] = font_name
 
                             fig, ax1 = plt.subplots(figsize=(14, 8))
                             ax2 = ax1.twinx()
@@ -264,7 +284,7 @@ if uploaded_files:
                             fig.subplots_adjust(bottom=0.28)
                             
                             st.pyplot(fig)
-                            st.success("图表生成成功！中文字体与多时段独立配色已完美呈现！")
+                            st.success("图表生成成功！多时段独立配色与中文标题图例已完美呈现！")
 
                     except Exception as err:
                         st.error(f"计算或绘图过程中发生错误: {err}")

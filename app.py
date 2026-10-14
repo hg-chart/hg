@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
+import json
 from datetime import datetime, timedelta
 
 # 设置网页布局
@@ -20,14 +21,17 @@ COLUMN_ALIASES = {
 st.title("📊 设备运行数据多文件多时段汇总对比分析系统")
 st.markdown("---")
 
-# 创建本地持久化文件仓库文件夹
+# 创建本地持久化仓库文件夹与时段存档文件
 VAULT_DIR = "uploaded_vault"
 if not os.path.exists(VAULT_DIR):
     os.makedirs(VAULT_DIR)
 
-# 初始化历史方案
-if 'saved_templates' not in st.session_state:
-    st.session_state.saved_templates = {
+TEMPLATES_FILE = os.path.join(VAULT_DIR, "templates_vault.json")
+
+# 加载硬盘中持久化的历史方案
+@st.cache_resource
+def load_persistent_templates():
+    default_templates = {
         "默认测试方案 (5个时段示例)": [
             {"start": "2026-08-01 01:01:00", "end": "2026-08-05 01:01:50", "run_sec": "0", "stop_sec": "-"},
             {"start": "2026-09-19 01:01:50", "end": "2026-09-25 13:09:50", "run_sec": "0", "stop_sec": "-"},
@@ -36,6 +40,26 @@ if 'saved_templates' not in st.session_state:
             {"start": "2026-10-12 15:20:51", "end": "2026-10-14 15:20:50", "run_sec": "60", "stop_sec": "300"}
         ]
     }
+    if os.path.exists(TEMPLATES_FILE):
+        try:
+            with open(TEMPLATES_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return default_templates
+    return default_templates
+
+def save_persistent_templates(templates_dict):
+    try:
+        with open(TEMPLATES_FILE, "w", encoding="utf-8") as f:
+            json.dump(templates_dict, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        st.error(f"保存时段方案到硬盘失败: {e}")
+
+if 'saved_templates' not in st.session_state:
+    st.session_state.saved_templates = load_persistent_templates()
+
+if 'intervals' not in st.session_state:
+    st.session_state.intervals = []
 
 # --- 1. 文件上传与本地持久化文件库管理 ---
 st.subheader("1. 表格文件管理（支持新上传与本地持久化历史文件调用）")
@@ -113,13 +137,10 @@ if active_file_paths:
         threshold_input = st.text_input("负荷下限阈值 (留空则取全部数据)", value="")
         threshold = float(threshold_input) if threshold_input.strip() else None
 
-        # --- 4. 多时段对比配置（半屏紧凑版 + 独立秒数行） ---
+        # --- 4. 多时段对比配置（硬盘持久化时段方案管理） ---
         st.subheader("4. 多时段对比配置")
         
-        if 'intervals' not in st.session_state:
-            st.session_state.intervals = []
-
-        with st.expander("📁 历史时段方案管理（保存与一键加载）", expanded=False):
+        with st.expander("📁 历史时段方案管理（已实现硬盘持久化，刷新不丢失）", expanded=False):
             template_names = list(st.session_state.saved_templates.keys())
             col_t1, col_t2 = st.columns([2, 1])
             with col_t1:
@@ -135,7 +156,9 @@ if active_file_paths:
                         st.warning("当前还没有添加任何时段，无法保存！")
                     else:
                         st.session_state.saved_templates[new_template_name] = [dict(item) for item in st.session_state.intervals]
-                        st.success(f"方案【{new_template_name}】保存成功！")
+                        # 写入硬盘持久化文件
+                        save_persistent_templates(st.session_state.saved_templates)
+                        st.success(f"方案【{new_template_name}】已成功持久化保存到硬盘！")
                         st.rerun()
 
         default_dt = datetime.now()
@@ -156,7 +179,6 @@ if active_file_paths:
         default_end_dt = default_dt + timedelta(minutes=50)
 
         with st.form("interval_form"):
-            # 核心优化：利用外层两列（左半屏放开始时间，右半屏放结束时间），内部只占一半宽度
             outer_left, outer_right = st.columns(2)
 
             with outer_left:
@@ -179,7 +201,6 @@ if active_file_paths:
                 with ec5: e_min = st.text_input("分 ", value=f"{default_end_dt.minute:02d}", key="emin")
                 with ec6: e_sec = st.text_input("秒 ", value=f"{default_end_dt.second:02d}", key="es")
 
-            # 第二行：运行秒数、停止秒数与添加按钮（恢复原汁原味提示词）
             r_col1, r_col2, r_col3 = st.columns([2, 2, 1])
             with r_col1:
                 run_sec = st.text_input("运行秒数", "30")

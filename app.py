@@ -112,8 +112,8 @@ if active_file_paths:
         threshold_input = st.text_input("负荷下限阈值 (留空则取全部数据)", value="")
         threshold = float(threshold_input) if threshold_input.strip() else None
 
-        # --- 4. 多时段对比配置（紧凑同行版） ---
-        st.subheader("4. 多时段对比配置（历史方案与紧凑输入）")
+        # --- 4. 多时段对比配置（极致紧凑版） ---
+        st.subheader("4. 多时段对比配置（极简紧凑输入）")
         
         if 'intervals' not in st.session_state:
             st.session_state.intervals = []
@@ -155,12 +155,11 @@ if active_file_paths:
         default_end_dt = default_dt + timedelta(minutes=50)
 
         with st.form("interval_form"):
-            # 将开始与结束紧凑整合在同一行区域
-            col_start_box, col_end_box = st.columns(2)
+            col_left, col_right = st.columns(2)
 
-            with col_start_box:
+            with col_left:
                 st.markdown("🕒 **开始时间**")
-                sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
+                sc1, sc2, sc3, sc4, sc5, sc6 = st.columns([1.3, 1, 1, 1, 1, 1])
                 with sc1: s_y = st.text_input("年", value=str(default_dt.year))
                 with sc2: s_m = st.text_input("月", value=f"{default_dt.month:02d}")
                 with sc3: s_d = st.text_input("日", value=f"{default_dt.day:02d}")
@@ -168,9 +167,9 @@ if active_file_paths:
                 with sc5: s_min = st.text_input("分", value=f"{default_dt.minute:02d}")
                 with sc6: s_sec = st.text_input("秒", value=f"{default_dt.second:02d}")
 
-            with col_end_box:
+            with col_right:
                 st.markdown("🕒 **结束时间**")
-                ec1, ec2, ec3, ec4, ec5, ec6 = st.columns(6)
+                ec1, ec2, ec3, ec4, ec5, ec6 = st.columns([1.3, 1, 1, 1, 1, 1])
                 with ec1: e_y = st.text_input("年 ", value=str(default_end_dt.year))
                 with ec2: e_m = st.text_input("月 ", value=f"{default_end_dt.month:02d}")
                 with ec3: e_d = st.text_input("日 ", value=f"{default_end_dt.day:02d}")
@@ -178,13 +177,15 @@ if active_file_paths:
                 with ec5: e_min = st.text_input("分 ", value=f"{default_end_dt.minute:02d}")
                 with ec6: e_sec = st.text_input("秒 ", value=f"{default_end_dt.second:02d}")
 
-            rc1, rc2 = st.columns(2)
+            rc1, rc2, rc3 = st.columns([2, 2, 1])
             with rc1:
                 run_sec = st.text_input("多频集速运行秒数", "30")
             with rc2:
                 stop_sec = st.text_input("停止秒数 (若运行为0可不填)", "780")
-            
-            submitted = st.form_submit_button("➕ 添加该时段到对比列表")
+            with rc3:
+                st.write("")
+                submitted = st.form_submit_button("➕ 添加时段")
+
             if submitted:
                 try:
                     start_str = f"{s_y.strip()}-{s_m.strip().zfill(2)}-{s_d.strip().zfill(2)} {s_h.strip().zfill(2)}:{s_min.strip().zfill(2)}:{s_sec.strip().zfill(2)}"
@@ -202,7 +203,7 @@ if active_file_paths:
                             "run_sec": run_sec,
                             "stop_sec": stop_sec if (run_sec != "0" and run_sec != "0.0") else "-"
                         })
-                        st.success("添加成功！已自动为您衔接下一个时段的开始时间。")
+                        st.success("添加成功！已自动衔接下一时段。")
                         st.rerun()
                 except Exception as err:
                     st.error(f"时间格式错误或数值无效: {err}")

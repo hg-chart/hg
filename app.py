@@ -284,15 +284,12 @@ with st.expander("📁 历史时段方案管理", expanded=False):
                     st.success(f"方案“{template_name.strip()}”已保存。")
                     st.rerun()
 
-# 已有时段列表展示区（采用类似图二的年月日时分秒独立分栏输入）
+# 已有时段列表展示区（每个时段精简在同一行内展示）
 if st.session_state.intervals:
     st.markdown("📋 **当前已添加的对比时段列表：**")
 
     for idx, interval in enumerate(st.session_state.intervals):
         with st.container(border=True):
-            st.markdown(f"**#{idx + 1}**")
-            
-            # 解析原有的时间字符串以填充默认值
             try:
                 s_dt = pd.to_datetime(interval["start"])
             except Exception:
@@ -302,44 +299,52 @@ if st.session_state.intervals:
             except Exception:
                 e_dt = datetime.now() + timedelta(minutes=50)
 
-            st.markdown("🕒 **开始时间**")
-            sy1, sy2, sy3, sy4, sy5, sy6 = st.columns(6)
-            with sy1:
-                s_y = st.text_input("年", value=str(s_dt.year), key=f"s_y_{idx}")
-            with sy2:
-                s_m = st.text_input("月", value=f"{s_dt.month:02d}", key=f"s_m_{idx}")
-            with sy3:
-                s_d = st.text_input("日", value=f"{s_dt.day:02d}", key=f"s_d_{idx}")
-            with sy4:
-                s_h = st.text_input("时", value=f"{s_dt.hour:02d}", key=f"s_h_{idx}")
-            with sy5:
-                s_min = st.text_input("分", value=f"{s_dt.minute:02d}", key=f"s_min_{idx}")
-            with sy6:
-                s_s = st.text_input("秒", value=f"{s_dt.second:02d}", key=f"s_s_{idx}")
+            # 单行紧凑布局：序号、开始(12个格子+标签)、结束(12个格子+标签)、运行、停止、修改、上移、下移、删除
+            row_cols = st.columns([
+                0.5,                  # #序号
+                0.5, 1.2, 0.4, 1.0, 0.4, 1.0, 0.4, 0.8, 0.4, 0.8, 0.4, 0.8, 0.4,  # 开始时间组件 (开始: 年 月 日 时 分 秒)
+                0.5, 1.2, 0.4, 1.0, 0.4, 1.0, 0.4, 0.8, 0.4, 0.8, 0.4, 0.8, 0.4,  # 结束时间组件 (结束: 年 月 日 时 分 秒)
+                0.9, 0.9,             # 运行秒数、停止秒数
+                0.8, 0.8, 0.8, 0.8    # 按钮：修改、上移、下移、删除
+            ])
 
-            st.markdown("🕒 **结束时间**")
-            ey1, ey2, ey3, ey4, ey5, ey6 = st.columns(6)
-            with ey1:
-                e_y = st.text_input("年 ", value=str(e_dt.year), key=f"e_y_{idx}")
-            with ey2:
-                e_m = st.text_input("月 ", value=f"{e_dt.month:02d}", key=f"e_m_{idx}")
-            with ey3:
-                e_d = st.text_input("日 ", value=f"{e_dt.day:02d}", key=f"e_d_{idx}")
-            with ey4:
-                e_h = st.text_input("时 ", value=f"{e_dt.hour:02d}", key=f"e_h_{idx}")
-            with ey5:
-                e_min = st.text_input("分 ", value=f"{e_dt.minute:02d}", key=f"e_min_{idx}")
-            with ey6:
-                e_s = st.text_input("秒 ", value=f"{e_dt.second:02d}", key=f"e_s_{idx}")
+            with row_cols[0]:
+                st.markdown(f"**#{idx + 1}**")
 
-            r_col, st_col, b_col1, b_col2, b_col3, b_col4 = st.columns([1.5, 1.5, 1, 1, 1, 1])
-            with r_col:
-                new_run = st.text_input("运行秒数", value=str(interval.get("run_sec", "0")), key=f"run_{idx}")
-            with st_col:
-                new_stop = st.text_input("停止秒数", value=str(interval.get("stop_sec", "-")), key=f"stop_{idx}")
+            with row_cols[1]: st.markdown("开始")
+            with row_cols[2]: s_y = st.text_input("开始年", value=str(s_dt.year), key=f"s_y_{idx}", label_visibility="collapsed")
+            with row_cols[3]: st.markdown("年")
+            with row_cols[4]: s_m = st.text_input("开始月", value=f"{s_dt.month:02d}", key=f"s_m_{idx}", label_visibility="collapsed")
+            with row_cols[5]: st.markdown("月")
+            with row_cols[6]: s_d = st.text_input("开始日", value=f"{s_dt.day:02d}", key=f"s_d_{idx}", label_visibility="collapsed")
+            with row_cols[7]: st.markdown("日")
+            with row_cols[8]: s_h = st.text_input("开始时", value=f"{s_dt.hour:02d}", key=f"s_h_{idx}", label_visibility="collapsed")
+            with row_cols[9]: st.markdown("时")
+            with row_cols[10]: s_min = st.text_input("开始分", value=f"{s_dt.minute:02d}", key=f"s_min_{idx}", label_visibility="collapsed")
+            with row_cols[11]: st.markdown("分")
+            with row_cols[12]: s_s = st.text_input("开始秒", value=f"{s_dt.second:02d}", key=f"s_s_{idx}", label_visibility="collapsed")
+            with row_cols[13]: st.markdown("秒")
 
-            with b_col1:
-                st.markdown("<br>", unsafe_allow_html=True)
+            with row_cols[14]: st.markdown("结束")
+            with row_cols[15]: e_y = st.text_input("结束年", value=str(e_dt.year), key=f"e_y_{idx}", label_visibility="collapsed")
+            with row_cols[16]: st.markdown("年")
+            with row_cols[17]: e_m = st.text_input("结束月", value=f"{e_dt.month:02d}", key=f"e_m_{idx}", label_visibility="collapsed")
+            with row_cols[18]: st.markdown("月")
+            with row_cols[19]: e_d = st.text_input("结束日", value=f"{e_dt.day:02d}", key=f"e_d_{idx}", label_visibility="collapsed")
+            with row_cols[20]: st.markdown("日")
+            with row_cols[21]: e_h = st.text_input("结束时", value=f"{e_dt.hour:02d}", key=f"e_h_{idx}", label_visibility="collapsed")
+            with row_cols[22]: st.markdown("时")
+            with row_cols[23]: e_min = st.text_input("结束分", value=f"{e_dt.minute:02d}", key=f"e_min_{idx}", label_visibility="collapsed")
+            with row_cols[24]: st.markdown("分")
+            with row_cols[25]: e_s = st.text_input("结束秒", value=f"{e_dt.second:02d}", key=f"e_s_{idx}", label_visibility="collapsed")
+            with row_cols[26]: st.markdown("秒")
+
+            with row_cols[27]:
+                new_run = st.text_input("运行秒数", value=str(interval.get("run_sec", "0")), key=f"run_{idx}", label_visibility="collapsed", placeholder="运行秒")
+            with row_cols[28]:
+                new_stop = st.text_input("停止秒数", value=str(interval.get("stop_sec", "-")), key=f"stop_{idx}", label_visibility="collapsed", placeholder="停止秒")
+
+            with row_cols[29]:
                 if st.button("💾修改", key=f"update_{idx}", use_container_width=True):
                     try:
                         new_start = f"{s_y.strip()}-{s_m.strip().zfill(2)}-{s_d.strip().zfill(2)} {s_h.strip().zfill(2)}:{s_min.strip().zfill(2)}:{s_s.strip().zfill(2)}"
@@ -357,8 +362,7 @@ if st.session_state.intervals:
                     except Exception as e:
                         st.error(f"格式错误: {e}")
 
-            with b_col2:
-                st.markdown("<br>", unsafe_allow_html=True)
+            with row_cols[30]:
                 up_disabled = (idx == 0)
                 if st.button("⬆️上移", key=f"up_{idx}", disabled=up_disabled, use_container_width=True):
                     st.session_state.intervals[idx], st.session_state.intervals[idx - 1] = (
@@ -367,8 +371,7 @@ if st.session_state.intervals:
                     )
                     st.rerun()
 
-            with b_col3:
-                st.markdown("<br>", unsafe_allow_html=True)
+            with row_cols[31]:
                 down_disabled = (idx == len(st.session_state.intervals) - 1)
                 if st.button("⬇️下移", key=f"down_{idx}", disabled=down_disabled, use_container_width=True):
                     st.session_state.intervals[idx], st.session_state.intervals[idx + 1] = (
@@ -377,8 +380,7 @@ if st.session_state.intervals:
                     )
                     st.rerun()
 
-            with b_col4:
-                st.markdown("<br>", unsafe_allow_html=True)
+            with row_cols[32]:
                 if st.button("❌删除", key=f"del_{idx}", use_container_width=True):
                     st.session_state.intervals.pop(idx)
                     st.rerun()
@@ -417,41 +419,41 @@ default_end = default_start + timedelta(minutes=50)
 with st.form("interval_form"):
     st.markdown("➕ **添加新时段（开始时间已自动衔接上一时段结束时间）**")
 
-    st.markdown("🕒 **开始时间**")
-    sy1, sy2, sy3, sy4, sy5, sy6 = st.columns(6)
-    with sy1:
-        start_year = st.text_input("年", value=str(default_start.year), key="sy")
-    with sy2:
-        start_month = st.text_input("月", value=f"{default_start.month:02d}", key="sm")
-    with sy3:
-        start_day = st.text_input("日", value=f"{default_start.day:02d}", key="sd")
-    with sy4:
-        start_hour = st.text_input("时", value=f"{default_start.hour:02d}", key="sh")
-    with sy5:
-        start_minute = st.text_input("分", value=f"{default_start.minute:02d}", key="smin")
-    with sy6:
-        start_second = st.text_input("秒", value=f"{default_start.second:02d}", key="ss")
+    # 底部添加表单也同样采用单行紧凑排列
+    add_cols = st.columns([0.6, 1.2, 0.4, 1.0, 0.4, 1.0, 0.4, 0.8, 0.4, 0.8, 0.4, 0.8, 0.4, 0.6, 1.2, 0.4, 1.0, 0.4, 1.0, 0.4, 0.8, 0.4, 0.8, 0.4, 0.8, 0.4, 1.0, 1.0])
+    
+    with add_cols[0]: st.markdown("开始")
+    with add_cols[1]: start_year = st.text_input("年", value=str(default_start.year), key="sy", label_visibility="collapsed")
+    with add_cols[2]: st.markdown("年")
+    with add_cols[3]: start_month = st.text_input("月", value=f"{default_start.month:02d}", key="sm", label_visibility="collapsed")
+    with add_cols[4]: st.markdown("月")
+    with add_cols[5]: start_day = st.text_input("日", value=f"{default_start.day:02d}", key="sd", label_visibility="collapsed")
+    with add_cols[6]: st.markdown("日")
+    with add_cols[7]: start_hour = st.text_input("时", value=f"{default_start.hour:02d}", key="sh", label_visibility="collapsed")
+    with add_cols[8]: st.markdown("时")
+    with add_cols[9]: start_minute = st.text_input("分", value=f"{default_start.minute:02d}", key="smin", label_visibility="collapsed")
+    with add_cols[10]: st.markdown("分")
+    with add_cols[11]: start_second = st.text_input("秒", value=f"{default_start.second:02d}", key="ss", label_visibility="collapsed")
+    with add_cols[12]: st.markdown("秒")
 
-    st.markdown("🕒 **结束时间**")
-    ey1, ey2, ey3, ey4, ey5, ey6 = st.columns(6)
-    with ey1:
-        end_year = st.text_input("年 ", value=str(default_end.year), key="ey")
-    with ey2:
-        end_month = st.text_input("月 ", value=f"{default_end.month:02d}", key="em")
-    with ey3:
-        end_day = st.text_input("日 ", value=f"{default_end.day:02d}", key="ed")
-    with ey4:
-        end_hour = st.text_input("时 ", value=f"{default_end.hour:02d}", key="eh")
-    with ey5:
-        end_minute = st.text_input("分 ", value=f"{default_end.minute:02d}", key="emin")
-    with ey6:
-        end_second = st.text_input("秒 ", value=f"{default_end.second:02d}", key="es")
+    with add_cols[13]: st.markdown("结束")
+    with add_cols[14]: end_year = st.text_input("年 ", value=str(default_end.year), key="ey", label_visibility="collapsed")
+    with add_cols[15]: st.markdown("年")
+    with add_cols[16]: end_month = st.text_input("月 ", value=f"{default_end.month:02d}", key="em", label_visibility="collapsed")
+    with add_cols[17]: st.markdown("月")
+    with add_cols[18]: end_day = st.text_input("日 ", value=f"{default_end.day:02d}", key="ed", label_visibility="collapsed")
+    with add_cols[19]: st.markdown("日")
+    with add_cols[20]: end_hour = st.text_input("时 ", value=f"{default_end.hour:02d}", key="eh", label_visibility="collapsed")
+    with add_cols[21]: st.markdown("时")
+    with add_cols[22]: end_minute = st.text_input("分 ", value=f"{default_end.minute:02d}", key="emin", label_visibility="collapsed")
+    with add_cols[23]: st.markdown("分")
+    with add_cols[24]: end_second = st.text_input("秒 ", value=f"{default_end.second:02d}", key="es", label_visibility="collapsed")
+    with add_cols[25]: st.markdown("秒")
 
-    run_col, stop_col = st.columns(2)
-    with run_col:
-        run_seconds = st.text_input("运行秒数", value="30")
-    with stop_col:
-        stop_seconds = st.text_input("停止秒数（若运行为0可不填）", value="780")
+    with add_cols[26]:
+        run_seconds = st.text_input("运行秒数", value="30", placeholder="运行秒", label_visibility="collapsed")
+    with add_cols[27]:
+        stop_seconds = st.text_input("停止秒数", value="780", placeholder="停止秒", label_visibility="collapsed")
 
     add_interval = st.form_submit_button("➕ 确认添加时段", use_container_width=True)
 

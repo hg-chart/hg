@@ -4,6 +4,7 @@
 import os
 import json
 import logging
+import uuid
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -122,8 +123,6 @@ if "saved_templates" not in st.session_state:
     st.session_state.saved_templates = load_persistent_templates()
 if "intervals" not in st.session_state:
     st.session_state.intervals = []
-if "edit_ver" not in st.session_state:
-    st.session_state.edit_ver = 0
 
 
 # ============================================================
@@ -255,49 +254,6 @@ if threshold_text.strip():
 
 st.subheader("4. 多时段对比配置")
 
-
-def mutate_intervals(new_list, select=None):
-    """统一修改时段列表：刷新编辑控件、让新增表单重新衔接上一时段结束时间。"""
-    st.session_state.intervals = new_list
-    st.session_state.edit_ver += 1
-    st.session_state["_sync_form"] = True
-    st.session_state["_sel_rows"] = list(select) if isinstance(select, (list, tuple, set)) else []
-    st.rerun()
-
-
-def parse_interval_time(text):
-    """解析并标准化时间字符串，失败时抛出异常。"""
-    value = pd.to_datetime(str(text).strip())
-    if pd.isna(value):
-        raise ValueError("时间为空")
-    return value
-
-
-def normalize_run_stop(run_text, stop_text):
-    """校验运行/停止秒数；运行为 0 时停止秒数记为 '-'。"""
-    run_text = str(run_text).strip() or "0"
-    try:
-        run_value = float(run_text)
-    except ValueError:
-        raise ValueError("运行秒数必须是数字")
-    if run_value < 0:
-        raise ValueError("运行秒数不能为负数")
-
-    if run_value == 0:
-        return run_text, "-"
-
-    stop_text = str(stop_text).strip()
-    if not stop_text or stop_text == "-":
-        return run_text, "-"
-    try:
-        stop_value = float(stop_text)
-    except ValueError:
-        raise ValueError("停止秒数必须是数字")
-    if stop_value < 0:
-        raise ValueError("停止秒数不能为负数")
-    return run_text, stop_text
-
-
 with st.expander("📁 历史时段方案管理", expanded=False):
     template_names = list(st.session_state.saved_templates.keys())
     tcol1, tcol2 = st.columns([2, 1])
@@ -306,9 +262,12 @@ with st.expander("📁 历史时段方案管理", expanded=False):
         if template_names:
             chosen_template = st.selectbox("选择已保存的历史方案", template_names)
             if st.button("📥 一键加载该历史方案"):
-                mutate_intervals([
-                    dict(item) for item in st.session_state.saved_templates[chosen_template]
-                ], select=0)
+                st.session_state.intervals = [
+                    {**dict(item), "_uid": uuid.uuid4().hex[:10]}
+                    for item in st.session_state.saved_templates[chosen_template]
+                ]
+                st.success(f"已加载历史方案：{chosen_template}")
+                st.rerun()
         else:
             st.info("尚无保存的历史方案。")
 
@@ -321,272 +280,184 @@ with st.expander("📁 历史时段方案管理", expanded=False):
                 st.warning("请填写方案名称。")
             else:
                 st.session_state.saved_templates[template_name.strip()] = [
-                    dict(item) for item in st.session_state.intervals
+                    {key: value for key, value in item.items() if key != "_uid"}
+                    for item in st.session_state.intervals
                 ]
                 if save_persistent_templates(st.session_state.saved_templates):
                     st.success(f"方案“{template_name.strip()}”已保存。")
                     st.rerun()
 
-def compute_form_start():
-    """新增表单的默认开始时间：有时段则取最后一个时段的结束时间，否则取数据最早时间。"""
-    if st.session_state.intervals:
-        try:
-            return pd.to_datetime(st.session_state.intervals[-1]["end"]).to_pydatetime()
-        except Exception:
-            pass
-    else:
-        try:
-            parsed = pd.to_datetime(
-                df_raw[time_col].astype(str).str.strip(),
-                format="mixed",
-                errors="coerce",
-            )
-            earliest = parsed.min()
-            if pd.notna(earliest):
-                return earliest.to_pydatetime()
-        except Exception:
-            pass
-    return datetime.now().replace(microsecond=0)
+# 为每个时段分配稳定标识，避免调整顺序后编辑框串位
+def ensure_interval_ids():
+    changed = False
+    for item in st.session_state.intervals:
+        if "_uid" not in item:
+            item["_uid"] = uuid.uuid4().hex[:10]
+            changed = True
+    return changed
 
 
-def fill_form_fields(start_dt):
-    """把开始/结束时间写入表单控件的 session_state（必须在控件创建之前调用）。"""
-    end_dt = start_dt + timedelta(minutes=50)
-    for prefix, dt in (("s", start_dt), ("e", end_dt)):
-        st.session_state[f"{prefix}y"] = str(dt.year)
-        st.session_state[f"{prefix}m"] = f"{dt.month:02d}"
-        st.session_state[f"{prefix}d"] = f"{dt.day:02d}"
-        st.session_state[f"{prefix}h"] = f"{dt.hour:02d}"
-        st.session_state[f"{prefix}min"] = f"{dt.minute:02d}"
-        st.session_state[f"{prefix}s"] = f"{dt.second:02d}"
+ensure_interval_ids()
 
-
-st.markdown(
-    """
-    <style>
-    /* 时间输入小方框：紧凑、居中、缩小间距，减少鼠标移动距离 */
-    .st-key-tb_add input, .st-key-tb_edit input {
-        text-align: center; padding: 0.2rem 0.15rem; min-height: 2rem;
-    }
-    .st-key-tb_add [data-testid="stHorizontalBlock"],
-    .st-key-tb_edit [data-testid="stHorizontalBlock"] {
-        gap: 0.2rem; align-items: center;
-    }
-    .st-key-tb_add [data-testid="stVerticalBlock"],
-    .st-key-tb_edit [data-testid="stVerticalBlock"] { gap: 0.4rem; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-TIME_FIELDS = [("年", 1.25), ("月", 0.85), ("日", 0.85), ("时", 0.85), ("分", 0.85), ("秒", 0.85)]
-
-
-def unit_label(text):
-    st.markdown(
-        f"<div style='white-space:nowrap;text-align:center'>{text}</div>",
-        unsafe_allow_html=True,
-    )
-
-
-def time_boxes(title, keys, values=None):
-    """一行：标题 + [年]年[月]月[日]日[时]时[分]分[秒]秒 的独立小方框，返回 6 段文本。"""
-    widths = [0.8]
-    for _, w in TIME_FIELDS:
-        widths += [w, 0.3]
-    cols = st.columns(widths)
-    with cols[0]:
-        unit_label(title)
-    parts = []
-    for i, (unit, _) in enumerate(TIME_FIELDS):
-        with cols[1 + 2 * i]:
-            kwargs = {"key": keys[i], "label_visibility": "collapsed"}
-            if values is not None:
-                kwargs["value"] = values[i]
-            parts.append(st.text_input(unit, **kwargs))
-        with cols[2 + 2 * i]:
-            unit_label(unit)
-    return parts
-
-
-def run_stop_boxes(run_default, stop_default, key_prefix=None):
-    """一行：多频集速运行 [  ] 秒 停止 [  ] 秒。"""
-    cols = st.columns([1.5, 1, 0.3, 0.7, 1, 0.3, 1.2])
-    with cols[0]:
-        unit_label("多频集速运行")
-    with cols[1]:
-        run_value = st.text_input(
-            "运行秒数", value=run_default, label_visibility="collapsed",
-            key=f"{key_prefix}_run" if key_prefix else None,
+default_start = datetime.now()
+if st.session_state.intervals:
+    try:
+        default_start = pd.to_datetime(st.session_state.intervals[-1]["end"]).to_pydatetime()
+    except Exception:
+        pass
+else:
+    try:
+        parsed = pd.to_datetime(
+            df_raw[time_col].astype(str).str.strip(),
+            format="mixed",
+            errors="coerce",
         )
-    with cols[2]:
-        unit_label("秒")
-    with cols[3]:
-        unit_label("停止")
-    with cols[4]:
-        stop_value = st.text_input(
-            "停止秒数", value=stop_default, label_visibility="collapsed",
-            key=f"{key_prefix}_stop" if key_prefix else None,
-        )
-    with cols[5]:
-        unit_label("秒")
-    return run_value, stop_value
+        earliest = parsed.min()
+        if pd.notna(earliest):
+            default_start = earliest.to_pydatetime()
+    except Exception:
+        pass
 
-
-def join_dt(parts):
-    y, mo, d, h, mi, s = [str(p).strip() for p in parts]
-    return f"{y}-{mo.zfill(2)}-{d.zfill(2)} {h.zfill(2)}:{mi.zfill(2)}:{s.zfill(2)}"
-
-
-def split_dt(text):
-    dt = pd.to_datetime(text)
-    return [str(dt.year), f"{dt.month:02d}", f"{dt.day:02d}",
-            f"{dt.hour:02d}", f"{dt.minute:02d}", f"{dt.second:02d}"]
-
-
-# 首次进入，或时段列表发生变化后：开始时间自动衔接上一时段结束时间
-if st.session_state.pop("_sync_form", False) or "sy" not in st.session_state:
-    fill_form_fields(compute_form_start())
-
-left_form, _ = st.columns([7, 3])
+default_end = default_start + timedelta(minutes=50)
+# 当上一个时段结束时间或时段数量变化时，使用新的 widget key，
+# 使新增时段的开始时间自动衔接上一时段结束时间，同时允许用户手动改动。
+start_key_seed = f"{len(st.session_state.intervals)}_{default_start.strftime('%Y%m%d%H%M%S')}"
+left_form, _ = st.columns([1, 1])
 
 with left_form:
-    with st.container(key="tb_add"):
-        with st.form("interval_form"):
-            st.caption("➕ 添加新时段（开始时间自动衔接上一时段结束时间，可手动修改）")
-            s_parts = time_boxes("开始：", ["sy", "sm", "sd", "sh", "smin", "ss"])
-            e_parts = time_boxes("结束：", ["ey", "em", "ed", "eh", "emin", "es"])
-            run_seconds, stop_seconds = run_stop_boxes("30", "780")
-            add_interval = st.form_submit_button("➕ 添加时段到对比列表")
+    with st.form("interval_form"):
+        st.markdown("🕒 **开始时间（默认自动衔接上一时段结束时间，可手动修改）**")
+        sy1, sy2, sy3, sy4, sy5, sy6 = st.columns(6)
+        with sy1:
+            start_year = st.text_input("年", value=str(default_start.year), key=f"sy_{start_key_seed}")
+        with sy2:
+            start_month = st.text_input("月", value=f"{default_start.month:02d}", key=f"sm_{start_key_seed}")
+        with sy3:
+            start_day = st.text_input("日", value=f"{default_start.day:02d}", key=f"sd_{start_key_seed}")
+        with sy4:
+            start_hour = st.text_input("时", value=f"{default_start.hour:02d}", key=f"sh_{start_key_seed}")
+        with sy5:
+            start_minute = st.text_input("分", value=f"{default_start.minute:02d}", key=f"smin_{start_key_seed}")
+        with sy6:
+            start_second = st.text_input("秒", value=f"{default_start.second:02d}", key=f"ss_{start_key_seed}")
 
-            if add_interval:
-                try:
-                    start_string = join_dt(s_parts)
-                    end_string = join_dt(e_parts)
-                    start_dt = pd.to_datetime(start_string)
-                    end_dt = pd.to_datetime(end_string)
+        st.markdown("🕒 **结束时间**")
+        ey1, ey2, ey3, ey4, ey5, ey6 = st.columns(6)
+        with ey1:
+            end_year = st.text_input("年 ", value=str(default_end.year), key=f"ey_{start_key_seed}")
+        with ey2:
+            end_month = st.text_input("月 ", value=f"{default_end.month:02d}", key=f"em_{start_key_seed}")
+        with ey3:
+            end_day = st.text_input("日 ", value=f"{default_end.day:02d}", key=f"ed_{start_key_seed}")
+        with ey4:
+            end_hour = st.text_input("时 ", value=f"{default_end.hour:02d}", key=f"eh_{start_key_seed}")
+        with ey5:
+            end_minute = st.text_input("分 ", value=f"{default_end.minute:02d}", key=f"emin_{start_key_seed}")
+        with ey6:
+            end_second = st.text_input("秒 ", value=f"{default_end.second:02d}", key=f"es_{start_key_seed}")
 
-                    if start_dt >= end_dt:
-                        st.error("开始时间必须早于结束时间！")
-                    else:
-                        run_text, stop_text = normalize_run_stop(run_seconds, stop_seconds)
-                        new_list = list(st.session_state.intervals)
-                        new_list.append({
-                            "start": start_string,
-                            "end": end_string,
-                            "run_sec": run_text,
-                            "stop_sec": stop_text,
-                        })
-                        mutate_intervals(new_list)
-                except ValueError as exc:
-                    st.error(f"输入有误：{exc}")
-                except Exception as exc:
-                    st.error(f"时间格式错误：{exc}")
+        run_col, stop_col = st.columns(2)
+        with run_col:
+            run_seconds = st.text_input("多频集速运行秒数", value="30", key=f"run_{start_key_seed}")
+        with stop_col:
+            stop_seconds = st.text_input("多频集速停止秒数（运行秒数为 0 时可不填）", value="780", key=f"stop_{start_key_seed}")
 
-# ------------------------------------------------------------
-# 已添加时段：勾选一行 → 在下方小方框里修改；上移 / 下移 / 删除
-# ------------------------------------------------------------
-if st.session_state.intervals:
-    intervals = st.session_state.intervals
-    ver = st.session_state.edit_ver
-    sel_rows = set(st.session_state.get("_sel_rows", []))
+        add_interval = st.form_submit_button("➕ 添加时段到对比列表", use_container_width=True)
 
-    st.write("当前已添加的对比时段（图表按此顺序依次排列）。勾选“选择”后，可在下方修改、上移/下移或删除：")
-    table_df = pd.DataFrame([
-        {
-            "选择": i in sel_rows,
-            "序号": i + 1,
-            "开始时间": item["start"],
-            "结束时间": item["end"],
-            "多频集速运行(s)": str(item.get("run_sec", "0")),
-            "多频集速停止(s)": str(item.get("stop_sec", "-")),
-        }
-        for i, item in enumerate(intervals)
-    ])
-    edited = st.data_editor(
-        table_df,
-        hide_index=True,
-        use_container_width=True,
-        num_rows="fixed",
-        disabled=["序号", "开始时间", "结束时间", "多频集速运行(s)", "多频集速停止(s)"],
-        column_config={
-            "选择": st.column_config.CheckboxColumn("选择", width="small"),
-            "序号": st.column_config.NumberColumn("序号", width="small"),
-        },
-        key=f"interval_table_{ver}",
-    )
-    selected = [i for i, flag in enumerate(edited["选择"].tolist()) if flag]
-
-    save = False
-    with st.container(key="tb_edit"):
-        panel, _ = st.columns([7, 3])
-        with panel:
-            if selected:
-                active = selected[0]
-                cur = intervals[active]
-                st.caption(f"✏️ 修改时段 {active + 1}（改完点“保存修改”）")
-                base = f"ed{ver}_{active}"
-                try:
-                    sv, ev = split_dt(cur["start"]), split_dt(cur["end"])
-                except Exception:
-                    sv, ev = [""] * 6, [""] * 6
-                es_parts = time_boxes("开始：", [f"{base}_s{i}" for i in range(6)], sv)
-                ee_parts = time_boxes("结束：", [f"{base}_e{i}" for i in range(6)], ev)
-                edit_run, edit_stop = run_stop_boxes(
-                    str(cur.get("run_sec", "0")), str(cur.get("stop_sec", "-")), key_prefix=base
+        if add_interval:
+            try:
+                start_string = (
+                    f"{start_year.strip()}-{start_month.strip().zfill(2)}-{start_day.strip().zfill(2)} "
+                    f"{start_hour.strip().zfill(2)}:{start_minute.strip().zfill(2)}:{start_second.strip().zfill(2)}"
                 )
-            else:
-                st.caption("✏️ 勾选上方某一行，即可在这里修改它的起止时间和运行/停止秒数。")
+                end_string = (
+                    f"{end_year.strip()}-{end_month.strip().zfill(2)}-{end_day.strip().zfill(2)} "
+                    f"{end_hour.strip().zfill(2)}:{end_minute.strip().zfill(2)}:{end_second.strip().zfill(2)}"
+                )
+                start_dt = pd.to_datetime(start_string)
+                end_dt = pd.to_datetime(end_string)
 
-            b1, b2, b3, b4, b5 = st.columns(5)
-            with b1:
-                save = st.button("💾 保存修改", type="primary", disabled=not selected, use_container_width=True)
-            with b2:
-                up = st.button("⬆️ 上移", disabled=not selected, use_container_width=True)
-            with b3:
-                down = st.button("⬇️ 下移", disabled=not selected, use_container_width=True)
-            with b4:
-                delete = st.button("❌ 删除", disabled=not selected, use_container_width=True)
-            with b5:
-                clear_all = st.button("🗑️ 清空", use_container_width=True)
+                if start_dt >= end_dt:
+                    st.error("开始时间必须早于结束时间！")
+                else:
+                    run_text = run_seconds.strip() or "0"
+                    stop_text = "-" if run_text in ("0", "0.0") else (stop_seconds.strip() or "-")
+                    st.session_state.intervals.append({
+                        "_uid": uuid.uuid4().hex[:10],
+                        "start": start_string,
+                        "end": end_string,
+                        "run_sec": run_text,
+                        "stop_sec": stop_text,
+                    })
+                    st.success("时段添加成功！")
+                    st.rerun()
+            except Exception as exc:
+                st.error(f"时间格式错误：{exc}")
 
-    if clear_all:
-        mutate_intervals([])
-    elif save and selected:
-        try:
-            new_start = parse_interval_time(join_dt(es_parts))
-            new_end = parse_interval_time(join_dt(ee_parts))
-            if new_start >= new_end:
-                st.error("开始时间必须早于结束时间！")
-            else:
-                run_text, stop_text = normalize_run_stop(edit_run, edit_stop)
-                new_list = [dict(item) for item in intervals]
-                new_list[active] = {
-                    "start": new_start.strftime("%Y-%m-%d %H:%M:%S"),
-                    "end": new_end.strftime("%Y-%m-%d %H:%M:%S"),
-                    "run_sec": run_text,
-                    "stop_sec": stop_text,
-                }
-                mutate_intervals(new_list, select=selected)
-        except ValueError as exc:
-            st.error(f"输入有误：{exc}")
-        except Exception as exc:
-            st.error(f"时间格式错误：{exc}")
-    elif (up or down) and selected:
-        chosen = set(selected)
-        order = list(range(len(intervals)))
-        if up:
-            for i in sorted(chosen):
-                if i > 0 and order[i - 1] not in chosen:
-                    order[i - 1], order[i] = order[i], order[i - 1]
-        else:
-            for i in sorted(chosen, reverse=True):
-                if i < len(order) - 1 and order[i + 1] not in chosen:
-                    order[i + 1], order[i] = order[i], order[i + 1]
-        moved_sel = [pos for pos, orig in enumerate(order) if orig in chosen]
-        mutate_intervals([dict(intervals[o]) for o in order], select=moved_sel)
-    elif delete and selected:
-        mutate_intervals([dict(item) for i, item in enumerate(intervals) if i not in set(selected)])
+if st.session_state.intervals:
+    st.write("当前已添加的对比时段（可编辑时间和运行参数，也可调整顺序或删除）：")
+    for index, interval in enumerate(st.session_state.intervals):
+        uid = interval["_uid"]
+        with st.expander(
+            f"时段 {index + 1}｜{interval.get('start', '')} 至 {interval.get('end', '')}",
+            expanded=False,
+        ):
+            with st.form(f"edit_interval_{uid}"):
+                st.caption("时间格式：YYYY-MM-DD HH:MM:SS")
+                edit_start = st.text_input("开始时间", value=str(interval.get("start", "")), key=f"edit_start_{uid}")
+                edit_end = st.text_input("结束时间", value=str(interval.get("end", "")), key=f"edit_end_{uid}")
+                edit_run_col, edit_stop_col = st.columns(2)
+                with edit_run_col:
+                    edit_run = st.text_input("多频集速运行秒数", value=str(interval.get("run_sec", "0")), key=f"edit_run_{uid}")
+                with edit_stop_col:
+                    edit_stop = st.text_input("多频集速停止秒数", value=str(interval.get("stop_sec", "-")), key=f"edit_stop_{uid}")
+                save_edit = st.form_submit_button("💾 保存此时段修改")
+                if save_edit:
+                    try:
+                        start_dt = pd.to_datetime(edit_start.strip())
+                        end_dt = pd.to_datetime(edit_end.strip())
+                        if start_dt >= end_dt:
+                            st.error("开始时间必须早于结束时间！")
+                        else:
+                            run_text = edit_run.strip() or "0"
+                            stop_text = "-" if run_text in ("0", "0.0") else (edit_stop.strip() or "-")
+                            interval["start"] = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+                            interval["end"] = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+                            interval["run_sec"] = run_text
+                            interval["stop_sec"] = stop_text
+                            st.success(f"时段 {index + 1} 修改成功。")
+                            st.rerun()
+                    except Exception as exc:
+                        st.error(f"时间格式错误，请使用 YYYY-MM-DD HH:MM:SS：{exc}")
+
+            move_col1, move_col2, delete_col = st.columns(3)
+            with move_col1:
+                if st.button("⬆️ 上移", key=f"move_up_{uid}", disabled=(index == 0), use_container_width=True):
+                    st.session_state.intervals[index - 1], st.session_state.intervals[index] = (
+                        st.session_state.intervals[index], st.session_state.intervals[index - 1]
+                    )
+                    st.rerun()
+            with move_col2:
+                if st.button("⬇️ 下移", key=f"move_down_{uid}", disabled=(index == len(st.session_state.intervals) - 1), use_container_width=True):
+                    st.session_state.intervals[index + 1], st.session_state.intervals[index] = (
+                        st.session_state.intervals[index], st.session_state.intervals[index + 1]
+                    )
+                    st.rerun()
+            with delete_col:
+                if st.button("🗑️ 删除此时段", key=f"delete_{uid}", use_container_width=True):
+                    st.session_state.intervals = [
+                        item for item in st.session_state.intervals if item.get("_uid") != uid
+                    ]
+                    st.rerun()
+
+    display_intervals = [
+        {key: value for key, value in item.items() if key != "_uid"}
+        for item in st.session_state.intervals
+    ]
+    st.dataframe(pd.DataFrame(display_intervals), use_container_width=True)
+    if st.button("🗑️ 清空所有时段"):
+        st.session_state.intervals = []
+        st.rerun()
 
 st.markdown("---")
 

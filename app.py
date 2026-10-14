@@ -23,24 +23,6 @@ st.set_page_config(
     layout="wide",
 )
 
-# 注入 CSS 确保手机端输入框可以横向排布在一行
-st.markdown("""
-<style>
-.inline-time-container {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    width: 100%;
-}
-.inline-time-container > div {
-    flex: 1;
-}
-.inline-time-container > div:first-child {
-    flex: 2.2;
-}
-</style>
-""", unsafe_allow_html=True)
-
 matplotlib.rcParams["axes.unicode_minus"] = False
 
 FONT_FILES = [
@@ -442,36 +424,118 @@ else:
 default_end = default_start + timedelta(minutes=50)
 
 # ============================================================
-# 2. 放在下方的“添加新时段”表单（使用 CSS 强制同行显示）
+# 2. 添加新时段表单：手机端年月日时分秒保持在同一行
 # ============================================================
+# 仅调整表单内部的列布局，避免 Streamlit 在手机窄屏下自动将时间字段拆成多行。
+st.markdown(
+    """
+    <style>
+    @media (max-width: 640px) {
+        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] {
+            flex-wrap: nowrap !important;
+            flex-direction: row !important;
+            gap: 0.25rem !important;
+            align-items: flex-end !important;
+        }
+        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+            min-width: 0 !important;
+            padding-left: 0 !important;
+            padding-right: 0 !important;
+            flex-shrink: 1 !important;
+        }
+        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] [data-testid="stNumberInput"] {
+            min-width: 0 !important;
+            width: 100% !important;
+        }
+        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] [data-testid="stNumberInput"] input {
+            min-width: 0 !important;
+            padding-left: 0.2rem !important;
+            padding-right: 0.2rem !important;
+            text-align: center !important;
+            font-size: 0.78rem !important;
+        }
+        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] label {
+            font-size: 0.68rem !important;
+            white-space: nowrap !important;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 with st.container(border=True):
     st.markdown("➕ **添加新时段**（自动智能衔接，支持秒级精准配置）")
     with st.form("interval_form"):
         st.markdown("📅 **开始时间**")
-        st.markdown('<div class="inline-time-container">', unsafe_allow_html=True)
-        sc1, sc2, sc3, sc4 = st.columns(4)
+        sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(
+            [1.45, 0.8, 0.8, 0.8, 0.8, 0.8], gap="small"
+        )
         with sc1:
-            start_date = st.date_input("开始日期", value=default_start.date(), key="s_date", label_visibility="collapsed")
+            start_year = st.number_input(
+                "年", min_value=1970, max_value=2100,
+                value=default_start.year, step=1, key="s_year"
+            )
         with sc2:
-            start_hour = st.number_input("时", min_value=0, max_value=23, value=default_start.hour, key="s_h", label_visibility="collapsed")
+            start_month = st.number_input(
+                "月", min_value=1, max_value=12,
+                value=default_start.month, step=1, key="s_month"
+            )
         with sc3:
-            start_minute = st.number_input("分", min_value=0, max_value=59, value=default_start.minute, key="s_m", label_visibility="collapsed")
+            start_day = st.number_input(
+                "日", min_value=1, max_value=31,
+                value=default_start.day, step=1, key="s_day"
+            )
         with sc4:
-            start_second = st.number_input("秒", min_value=0, max_value=59, value=default_start.second, key="s_s", label_visibility="collapsed")
-        st.markdown('</div>', unsafe_allow_html=True)
+            start_hour = st.number_input(
+                "时", min_value=0, max_value=23,
+                value=default_start.hour, step=1, key="s_h"
+            )
+        with sc5:
+            start_minute = st.number_input(
+                "分", min_value=0, max_value=59,
+                value=default_start.minute, step=1, key="s_m"
+            )
+        with sc6:
+            start_second = st.number_input(
+                "秒", min_value=0, max_value=59,
+                value=default_start.second, step=1, key="s_s"
+            )
 
         st.markdown("📅 **结束时间**")
-        st.markdown('<div class="inline-time-container">', unsafe_allow_html=True)
-        ec1, ec2, ec3, ec4 = st.columns(4)
+        ec1, ec2, ec3, ec4, ec5, ec6 = st.columns(
+            [1.45, 0.8, 0.8, 0.8, 0.8, 0.8], gap="small"
+        )
         with ec1:
-            end_date = st.date_input("结束日期", value=default_end.date(), key="e_date", label_visibility="collapsed")
+            end_year = st.number_input(
+                "年", min_value=1970, max_value=2100,
+                value=default_end.year, step=1, key="e_year"
+            )
         with ec2:
-            end_hour = st.number_input("时 ", min_value=0, max_value=23, value=default_end.hour, key="e_h", label_visibility="collapsed")
+            end_month = st.number_input(
+                "月", min_value=1, max_value=12,
+                value=default_end.month, step=1, key="e_month"
+            )
         with ec3:
-            end_minute = st.number_input("分 ", min_value=0, max_value=59, value=default_end.minute, key="e_m", label_visibility="collapsed")
+            end_day = st.number_input(
+                "日", min_value=1, max_value=31,
+                value=default_end.day, step=1, key="e_day"
+            )
         with ec4:
-            end_second = st.number_input("秒 ", min_value=0, max_value=59, value=default_end.second, key="e_s", label_visibility="collapsed")
-        st.markdown('</div>', unsafe_allow_html=True)
+            end_hour = st.number_input(
+                "时", min_value=0, max_value=23,
+                value=default_end.hour, step=1, key="e_h"
+            )
+        with ec5:
+            end_minute = st.number_input(
+                "分", min_value=0, max_value=59,
+                value=default_end.minute, step=1, key="e_m"
+            )
+        with ec6:
+            end_second = st.number_input(
+                "秒", min_value=0, max_value=59,
+                value=default_end.second, step=1, key="e_s"
+            )
 
         run_col, stop_col, btn_col = st.columns([2, 2, 1.5])
         with run_col:
@@ -485,11 +549,11 @@ with st.container(border=True):
         if add_interval:
             try:
                 start_dt = datetime(
-                    start_date.year, start_date.month, start_date.day,
+                    int(start_year), int(start_month), int(start_day),
                     int(start_hour), int(start_minute), int(start_second)
                 )
                 end_dt = datetime(
-                    end_date.year, end_date.month, end_date.day,
+                    int(end_year), int(end_month), int(end_day),
                     int(end_hour), int(end_minute), int(end_second)
                 )
 

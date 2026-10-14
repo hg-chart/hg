@@ -248,7 +248,7 @@ if threshold_text.strip():
 
 
 # ============================================================
-# 6. 多时段配置与历史方案（已按要求增强）
+# 6. 多时段配置与历史方案
 # ============================================================
 
 st.subheader("4. 多时段对比配置")
@@ -377,28 +377,26 @@ with left_form:
                 st.error(f"时间格式错误：{exc}")
 
 if st.session_state.intervals:
-    st.write("当前已添加的对比时段（支持顺序调整、时段删除、起止时间与运行参数修改）：")
+    st.write("当前已添加的对比时段（支持同排修改、删除、顺序调整）：")
     
-    # 遍历列表进行逐个时段的精细化管理与修改
+    # 严格压缩到同一行：编号 | 开始时间 | 结束时间 | 运行秒 | 停止秒 | 修改 | 上移 | 下移 | 删除
     for idx, interval in enumerate(st.session_state.intervals):
         with st.container(border=True):
-            cols = st.columns([0.8, 2.2, 2.2, 1.2, 1.2, 1.0, 1.0, 1.0])
+            cols = st.columns([0.6, 2.2, 2.2, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9])
             with cols[0]:
                 st.markdown(f"**#{idx + 1}**")
             with cols[1]:
-                new_start = st.text_input(f"开始时间_{idx}", value=interval["start"], label_visibility="collapsed")
+                new_start = st.text_input(f"开始_{idx}", value=interval["start"], label_visibility="collapsed")
             with cols[2]:
-                new_end = st.text_input(f"结束时间_{idx}", value=interval["end"], label_visibility="collapsed")
+                new_end = st.text_input(f"结束_{idx}", value=interval["end"], label_visibility="collapsed")
             with cols[3]:
-                new_run = st.text_input(f"运行秒_{idx}", value=str(interval.get("run_sec", "0")), label_visibility="collapsed")
+                new_run = st.text_input(f"运_{idx}", value=str(interval.get("run_sec", "0")), label_visibility="collapsed")
             with cols[4]:
-                new_stop = st.text_input(f"停止秒_{idx}", value=str(interval.get("stop_sec", "-")), label_visibility="collapsed")
+                new_stop = st.text_input(f"停_{idx}", value=str(interval.get("stop_sec", "-")), label_visibility="collapsed")
             
-            # 更新按钮
             with cols[5]:
                 if st.button("💾修改", key=f"update_{idx}", use_container_width=True):
                     try:
-                        # 校验时间格式
                         pd.to_datetime(new_start)
                         pd.to_datetime(new_end)
                         st.session_state.intervals[idx] = {
@@ -412,7 +410,6 @@ if st.session_state.intervals:
                     except Exception as e:
                         st.error(f"格式错误: {e}")
             
-            # 上移 / 下移 / 删除 按钮控制
             with cols[6]:
                 up_disabled = (idx == 0)
                 if st.button("⬆️上移", key=f"up_{idx}", disabled=up_disabled, use_container_width=True):
@@ -421,6 +418,7 @@ if st.session_state.intervals:
                         st.session_state.intervals[idx],
                     )
                     st.rerun()
+                    
             with cols[7]:
                 down_disabled = (idx == len(st.session_state.intervals) - 1)
                 if st.button("⬇️下移", key=f"down_{idx}", disabled=down_disabled, use_container_width=True):
@@ -429,13 +427,11 @@ if st.session_state.intervals:
                         st.session_state.intervals[idx],
                     )
                     st.rerun()
-                    
-        # 单独删除某一时段的辅助小按钮行
-        del_col1, _ = st.columns([1, 9])
-        with del_col1:
-            if st.button(f"❌ 删除时段 #{idx + 1}", key=f"del_{idx}"):
-                st.session_state.intervals.pop(idx)
-                st.rerun()
+
+            with cols[8]:
+                if st.button("❌删除", key=f"del_{idx}", use_container_width=True):
+                    st.session_state.intervals.pop(idx)
+                    st.rerun()
 
     if st.button("🗑️ 清空所有时段"):
         st.session_state.intervals = []

@@ -112,8 +112,8 @@ if active_file_paths:
         threshold_input = st.text_input("负荷下限阈值 (留空则取全部数据)", value="")
         threshold = float(threshold_input) if threshold_input.strip() else None
 
-        # --- 4. 多时段对比配置（极致紧凑版） ---
-        st.subheader("4. 多时段对比配置（极简紧凑输入）")
+        # --- 4. 多时段对比配置（极致微距紧凑版） ---
+        st.subheader("4. 多时段对比配置（极小鼠标移动距离设计）")
         
         if 'intervals' not in st.session_state:
             st.session_state.intervals = []
@@ -155,36 +155,34 @@ if active_file_paths:
         default_end_dt = default_dt + timedelta(minutes=50)
 
         with st.form("interval_form"):
-            col_left, col_right = st.columns(2)
+            # 将开始、结束、运行秒数、停止秒数全部聚合在极窄的微距网格中，减少鼠标移动距离
+            c_y1, c_m1, c_d1, c_h1, c_min1, c_s1, c_y2, c_m2, c_d2, c_h2, c_min2, c_s2, c_run, c_stop, c_btn = st.columns([
+                1.2, 1, 1, 1, 1, 1,   # 开始：年 月 日 时 分 秒
+                1.2, 1, 1, 1, 1, 1,   # 结束：年 月 日 时 分 秒
+                1.2, 1.2,             # 运行秒数、停止秒数
+                1.2                   # 添加按钮
+            ])
 
-            with col_left:
-                st.markdown("🕒 **开始时间**")
-                sc1, sc2, sc3, sc4, sc5, sc6 = st.columns([1.3, 1, 1, 1, 1, 1])
-                with sc1: s_y = st.text_input("年", value=str(default_dt.year))
-                with sc2: s_m = st.text_input("月", value=f"{default_dt.month:02d}")
-                with sc3: s_d = st.text_input("日", value=f"{default_dt.day:02d}")
-                with sc4: s_h = st.text_input("时", value=f"{default_dt.hour:02d}")
-                with sc5: s_min = st.text_input("分", value=f"{default_dt.minute:02d}")
-                with sc6: s_sec = st.text_input("秒", value=f"{default_dt.second:02d}")
+            with c_y1: s_y = st.text_input("开始-年", value=str(default_dt.year))
+            with c_m1: s_m = st.text_input("开始-月", value=f"{default_dt.month:02d}")
+            with c_d1: s_d = st.text_input("开始-日", value=f"{default_dt.day:02d}")
+            with c_h1: s_h = st.text_input("开始-时", value=f"{default_dt.hour:02d}")
+            with c_min1: s_min = st.text_input("开始-分", value=f"{default_dt.minute:02d}")
+            with c_s1: s_sec = st.text_input("开始-秒", value=f"{default_dt.second:02d}")
 
-            with col_right:
-                st.markdown("🕒 **结束时间**")
-                ec1, ec2, ec3, ec4, ec5, ec6 = st.columns([1.3, 1, 1, 1, 1, 1])
-                with ec1: e_y = st.text_input("年 ", value=str(default_end_dt.year))
-                with ec2: e_m = st.text_input("月 ", value=f"{default_end_dt.month:02d}")
-                with ec3: e_d = st.text_input("日 ", value=f"{default_end_dt.day:02d}")
-                with ec4: e_h = st.text_input("时 ", value=f"{default_end_dt.hour:02d}")
-                with ec5: e_min = st.text_input("分 ", value=f"{default_end_dt.minute:02d}")
-                with ec6: e_sec = st.text_input("秒 ", value=f"{default_end_dt.second:02d}")
+            with c_y2: e_y = st.text_input("结束-年", value=str(default_end_dt.year))
+            with c_m2: e_m = st.text_input("结束-月", value=f"{default_end_dt.month:02d}")
+            with c_d2: e_d = st.text_input("结束-日", value=f"{default_end_dt.day:02d}")
+            with c_h2: e_h = st.text_input("结束-时", value=f"{default_end_dt.hour:02d}")
+            with c_min2: e_min = st.text_input("结束-分", value=f"{default_end_dt.minute:02d}")
+            with c_s2: e_sec = st.text_input("结束-秒", value=f"{default_end_dt.second:02d}")
 
-            rc1, rc2, rc3 = st.columns([2, 2, 1])
-            with rc1:
-                run_sec = st.text_input("多频集速运行秒数", "30")
-            with rc2:
-                stop_sec = st.text_input("停止秒数 (若运行为0可不填)", "780")
-            with rc3:
-                st.write("")
-                submitted = st.form_submit_button("➕ 添加时段")
+            with c_run: run_sec = st.text_input("运行(s)", "30")
+            with c_stop: stop_sec = st.text_input("停止(s)", "780")
+
+            with c_btn:
+                st.write("") # 占位对齐
+                submitted = st.form_submit_button("➕ 添加")
 
             if submitted:
                 try:
@@ -203,10 +201,10 @@ if active_file_paths:
                             "run_sec": run_sec,
                             "stop_sec": stop_sec if (run_sec != "0" and run_sec != "0.0") else "-"
                         })
-                        st.success("添加成功！已自动衔接下一时段。")
+                        st.success("添加成功！")
                         st.rerun()
                 except Exception as err:
-                    st.error(f"时间格式错误或数值无效: {err}")
+                    st.error(f"时间格式错误: {err}")
 
         # 显示已添加的时段列表
         if st.session_state.intervals:

@@ -284,7 +284,7 @@ with st.expander("📁 历史时段方案管理", expanded=False):
                     st.success(f"方案“{template_name.strip()}”已保存。")
                     st.rerun()
 
-# 自动衔接时间计算
+# 自动衔接时间计算：如果有上一个时段，新添加的时段的开始时间默认自动衔接上一时段的结束时间
 default_start = datetime.now()
 if st.session_state.intervals:
     try:
@@ -305,11 +305,12 @@ else:
         pass
 
 default_end = default_start + timedelta(minutes=50)
-left_form, _ = st.columns([1, 1])
 
-with left_form:
+# 添加新时段表单（采用独立的年月日时分秒小方框设计）
+with st.container(border=True):
+    st.markdown("➕ **添加新时段**（第一个时段的结束时间会自动衔接为下一个时段的开始时间，支持自由改动）")
     with st.form("interval_form"):
-        st.markdown("🕒 **开始时间（自动衔接上一时段结束时间）**")
+        st.markdown("开始时间：")
         sy1, sy2, sy3, sy4, sy5, sy6 = st.columns(6)
         with sy1:
             start_year = st.text_input("年", value=str(default_start.year), key="sy")
@@ -324,7 +325,7 @@ with left_form:
         with sy6:
             start_second = st.text_input("秒", value=f"{default_start.second:02d}", key="ss")
 
-        st.markdown("🕒 **结束时间**")
+        st.markdown("结束时间：")
         ey1, ey2, ey3, ey4, ey5, ey6 = st.columns(6)
         with ey1:
             end_year = st.text_input("年 ", value=str(default_end.year), key="ey")
@@ -339,13 +340,14 @@ with left_form:
         with ey6:
             end_second = st.text_input("秒 ", value=f"{default_end.second:02d}", key="es")
 
-        run_col, stop_col = st.columns(2)
+        run_col, stop_col, btn_col = st.columns([2, 2, 1])
         with run_col:
-            run_seconds = st.text_input("运行秒数", value="30")
+            run_seconds = st.text_input("多频集速运行秒数", value="30")
         with stop_col:
-            stop_seconds = st.text_input("停止秒数（运行为 0 时可不填）", value="780")
-
-        add_interval = st.form_submit_button("➕ 添加时段到对比列表", use_container_width=True)
+            stop_seconds = st.text_input("停止秒数（若运行为0可不填）", value="780")
+        with btn_col:
+            st.write("")
+            add_interval = st.form_submit_button("添加时段", use_container_width=True)
 
         if add_interval:
             try:
@@ -376,7 +378,9 @@ with left_form:
             except Exception as exc:
                 st.error(f"时间格式错误：{exc}")
 
+# 已添加时段管理区（采用与图二完全一致的独立年月日小方框横向紧凑布局）
 if st.session_state.intervals:
+    st.markdown("---")
     st.write("当前已添加的对比时段（支持独立年月日方框修改、顺序调整与删除）：")
     
     for idx, interval in enumerate(st.session_state.intervals):
@@ -390,13 +394,13 @@ if st.session_state.intervals:
             e_dt = datetime.now() + timedelta(minutes=50)
 
         with st.container(border=True):
-            # 极度紧凑的一行：序号 + 简要信息 + 上移/下移/删除/修改展开按钮
-            r_cols = st.columns([0.6, 5.0, 0.9, 0.9, 0.9])
-            with r_cols[0]:
+            # 顶部行：编号 + 各种控制按钮（上移、下移、删除、保存修改）
+            head_cols = st.columns([0.6, 6.4, 1.0, 1.0, 1.0, 1.0])
+            with head_cols[0]:
                 st.markdown(f"**#{idx + 1}**")
-            with r_cols[1]:
-                st.markdown(f"<span style='font-size:13px; color:#333;'>起: <code>{interval['start']}</code> &nbsp;|&nbsp; 止: <code>{interval['end']}</code> &nbsp;|&nbsp; 运/停: <b>{interval.get('run_sec','0')}s</b> / <b>{interval.get('stop_sec','-')}s</b></span>", unsafe_allow_html=True)
-            with r_cols[2]:
+            with head_cols[1]:
+                st.markdown(f"<span style='font-size:13px; color:#555;'>运行秒: <b>{interval.get('run_sec','0')}s</b> | 停止秒: <b>{interval.get('stop_sec','-')}s</b></span>", unsafe_allow_html=True)
+            with head_cols[2]:
                 up_disabled = (idx == 0)
                 if st.button("⬆️上移", key=f"up_{idx}", disabled=up_disabled, use_container_width=True):
                     st.session_state.intervals[idx], st.session_state.intervals[idx - 1] = (
@@ -404,7 +408,7 @@ if st.session_state.intervals:
                         st.session_state.intervals[idx],
                     )
                     st.rerun()
-            with r_cols[3]:
+            with head_cols[3]:
                 down_disabled = (idx == len(st.session_state.intervals) - 1)
                 if st.button("⬇️下移", key=f"down_{idx}", disabled=down_disabled, use_container_width=True):
                     st.session_state.intervals[idx], st.session_state.intervals[idx + 1] = (
@@ -412,72 +416,94 @@ if st.session_state.intervals:
                         st.session_state.intervals[idx],
                     )
                     st.rerun()
-            with r_cols[4]:
+            with head_cols[4]:
+                if st.button("💾修改", key=f"save_{idx}", use_container_width=True):
+                    try:
+                        start_str = f"{ey_s.strip()}-{em_s.strip().zfill(2)}-{ed_s.strip().zfill(2)} {eh_s.strip().zfill(2)}:{emin_s.strip().zfill(2)}:{es_s.strip().zfill(2)}"
+                        end_str = f"{ey_e.strip()}-{em_e.strip().zfill(2)}-{ed_e.strip().zfill(2)} {eh_e.strip().zfill(2)}:{emin_e.strip().zfill(2)}:{es_e.strip().zfill(2)}"
+                        
+                        start_dt = pd.to_datetime(start_str)
+                        end_dt = pd.to_datetime(end_str)
+                        if start_dt >= end_dt:
+                            st.error("开始时间必须早于结束时间！")
+                        else:
+                            r_text = r_sec.strip() or "0"
+                            st_text = "-" if r_text in ("0", "0.0") else (s_sec.strip() or "-")
+                            st.session_state.intervals[idx] = {
+                                "start": start_str,
+                                "end": end_str,
+                                "run_sec": r_text,
+                                "stop_sec": st_text,
+                            }
+                            st.success("修改成功！")
+                            st.rerun()
+                    except Exception as ex:
+                        st.error(f"时间格式错误: {ex}")
+            with head_cols[5]:
                 if st.button("❌删除", key=f"del_{idx}", use_container_width=True):
                     st.session_state.intervals.pop(idx)
                     st.rerun()
 
-            # 使用独立方框修改时段起止时间与参数（紧凑收纳在折叠区内）
-            with st.expander("✏️ 修改此时段的年月日时分秒与运行参数", expanded=False):
-                st.markdown("🕒 **开始时间**")
-                sy1, sy2, sy3, sy4, sy5, sy6 = st.columns(6)
-                with sy1:
-                    ey_s = st.text_input("年", value=str(s_dt.year), key=f"sy_{idx}")
-                with sy2:
-                    em_s = st.text_input("月", value=f"{s_dt.month:02d}", key=f"sm_{idx}")
-                with sy3:
-                    ed_s = st.text_input("日", value=f"{s_dt.day:02d}", key=f"sd_{idx}")
-                with sy4:
-                    eh_s = st.text_input("时", value=f"{s_dt.hour:02d}", key=f"sh_{idx}")
-                with sy5:
-                    emin_s = st.text_input("分", value=f"{s_dt.minute:02d}", key=f"smin_{idx}")
-                with sy6:
-                    es_s = st.text_input("秒", value=f"{s_dt.second:02d}", key=f"ss_{idx}")
+            # 紧凑平铺的独立年月日时分秒输入行（完全参照图二风格）
+            st.markdown("开始：")
+            sy1, sy2, sy3, sy4, sy5, sy6, sy7, sy8, sy9, sy10, sy11, sy12 = st.columns(12)
+            with sy1:
+                ey_s = st.text_input("年", value=str(s_dt.year), key=f"sy_{idx}")
+            with sy2:
+                st.markdown("<p style='text-align:center; margin-top:8px;'>年</p>", unsafe_allow_html=True)
+            with sy3:
+                em_s = st.text_input("月", value=f"{s_dt.month:02d}", key=f"sm_{idx}")
+            with sy4:
+                st.markdown("<p style='text-align:center; margin-top:8px;'>月</p>", unsafe_allow_html=True)
+            with sy5:
+                ed_s = st.text_input("日", value=f"{s_dt.day:02d}", key=f"sd_{idx}")
+            with sy6:
+                st.markdown("<p style='text-align:center; margin-top:8px;'>日</p>", unsafe_allow_html=True)
+            with sy7:
+                eh_s = st.text_input("时", value=f"{s_dt.hour:02d}", key=f"sh_{idx}")
+            with sy8:
+                st.markdown("<p style='text-align:center; margin-top:8px;'>时</p>", unsafe_allow_html=True)
+            with sy9:
+                emin_s = st.text_input("分", value=f"{s_dt.minute:02d}", key=f"smin_{idx}")
+            with sy10:
+                st.markdown("<p style='text-align:center; margin-top:8px;'>分</p>", unsafe_allow_html=True)
+            with sy11:
+                es_s = st.text_input("秒", value=f"{s_dt.second:02d}", key=f"ss_{idx}")
+            with sy12:
+                st.markdown("<p style='text-align:center; margin-top:8px;'>秒</p>", unsafe_allow_html=True)
 
-                st.markdown("🕒 **结束时间**")
-                ey1, ey2, ey3, ey4, ey5, ey6 = st.columns(6)
-                with ey1:
-                    ey_e = st.text_input("年 ", value=str(e_dt.year), key=f"ey_{idx}")
-                with ey2:
-                    em_e = st.text_input("月 ", value=f"{e_dt.month:02d}", key=f"em_{idx}")
-                with ey3:
-                    ed_e = st.text_input("日 ", value=f"{e_dt.day:02d}", key=f"ed_{idx}")
-                with ey4:
-                    eh_e = st.text_input("时 ", value=f"{e_dt.hour:02d}", key=f"eh_{idx}")
-                with ey5:
-                    emin_e = st.text_input("分 ", value=f"{e_dt.minute:02d}", key=f"emin_{idx}")
-                with ey6:
-                    es_e = st.text_input("秒 ", value=f"{e_dt.second:02d}", key=f"es_{idx}")
+            st.markdown("结束：")
+            ey1, ey2, ey3, ey4, ey5, ey6, ey7, ey8, ey9, ey10, ey11, ey12 = st.columns(12)
+            with ey1:
+                ey_e = st.text_input("年 ", value=str(e_dt.year), key=f"ey_{idx}")
+            with ey2:
+                st.markdown("<p style='text-align:center; margin-top:8px;'>年</p>", unsafe_allow_html=True)
+            with ey3:
+                em_e = st.text_input("月 ", value=f"{e_dt.month:02d}", key=f"em_{idx}")
+            with ey4:
+                st.markdown("<p style='text-align:center; margin-top:8px;'>月</p>", unsafe_allow_html=True)
+            with ey5:
+                ed_e = st.text_input("日 ", value=f"{e_dt.day:02d}", key=f"ed_{idx}")
+            with ey6:
+                st.markdown("<p style='text-align:center; margin-top:8px;'>日</p>", unsafe_allow_html=True)
+            with ey7:
+                eh_e = st.text_input("时 ", value=f"{e_dt.hour:02d}", key=f"eh_{idx}")
+            with ey8:
+                st.markdown("<p style='text-align:center; margin-top:8px;'>时</p>", unsafe_allow_html=True)
+            with ey9:
+                emin_e = st.text_input("分 ", value=f"{e_dt.minute:02d}", key=f"emin_{idx}")
+            with ey10:
+                st.markdown("<p style='text-align:center; margin-top:8px;'>分</p>", unsafe_allow_html=True)
+            with ey11:
+                es_e = st.text_input("秒 ", value=f"{e_dt.second:02d}", key=f"es_{idx}")
+            with ey12:
+                st.markdown("<p style='text-align:center; margin-top:8px;'>秒</p>", unsafe_allow_html=True)
 
-                rc, sc, bc = st.columns([2, 2, 1])
-                with rc:
-                    r_sec = st.text_input("多频集速运行秒数", value=str(interval.get("run_sec", "30")), key=f"run_{idx}")
-                with sc:
-                    s_sec = st.text_input("停止秒数", value=str(interval.get("stop_sec", "780")), key=f"stop_{idx}")
-                with bc:
-                    st.write("")
-                    if st.button("💾 保存修改", key=f"save_{idx}", use_container_width=True):
-                        try:
-                            start_str = f"{ey_s.strip()}-{em_s.strip().zfill(2)}-{ed_s.strip().zfill(2)} {eh_s.strip().zfill(2)}:{emin_s.strip().zfill(2)}:{es_s.strip().zfill(2)}"
-                            end_str = f"{ey_e.strip()}-{em_e.strip().zfill(2)}-{ed_e.strip().zfill(2)} {eh_e.strip().zfill(2)}:{emin_e.strip().zfill(2)}:{es_e.strip().zfill(2)}"
-                            
-                            start_dt = pd.to_datetime(start_str)
-                            end_dt = pd.to_datetime(end_str)
-                            if start_dt >= end_dt:
-                                st.error("开始时间必须早于结束时间！")
-                            else:
-                                r_text = r_sec.strip() or "0"
-                                st_text = "-" if r_text in ("0", "0.0") else (s_sec.strip() or "-")
-                                st.session_state.intervals[idx] = {
-                                    "start": start_str,
-                                    "end": end_str,
-                                    "run_sec": r_text,
-                                    "stop_sec": st_text,
-                                }
-                                st.success("修改成功！")
-                                st.rerun()
-                        except Exception as ex:
-                            st.error(f"时间格式错误: {ex}")
+            prc, psc = st.columns(2)
+            with prc:
+                r_sec = st.text_input("多频集速运行秒数", value=str(interval.get("run_sec", "30")), key=f"run_{idx}")
+            with psc:
+                s_sec = st.text_input("停止秒数", value=str(interval.get("stop_sec", "780")), key=f"stop_{idx}")
 
     if st.button("🗑️ 清空所有时段"):
         st.session_state.intervals = []

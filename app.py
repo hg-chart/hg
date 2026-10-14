@@ -284,7 +284,9 @@ with st.expander("📁 历史时段方案管理", expanded=False):
                     st.success(f"方案“{template_name.strip()}”已保存。")
                     st.rerun()
 
-# 1. 先在上方展示已添加的对比时段表格及管理按钮区
+# ============================================================
+# 上方：红色框模式（已添加的时段表格列表及操作按钮）
+# ============================================================
 if st.session_state.intervals:
     st.write("当前已添加的对比时段（图表按此顺序依次排列）。勾选“选择”后，可在下方修改、上移/下移或删除：")
 
@@ -413,45 +415,67 @@ else:
 
 default_end = default_start + timedelta(minutes=50)
 
-# 2. 放在下方的“添加新时段”表单
+# ============================================================
+# 下方：绿色框模式（图二的网格化独立输入框：年/月/日/时/分/秒）
+# ============================================================
 with st.container(border=True):
     st.markdown("➕ **添加新时段**（第一个时段的结束时间会自动衔接为下一个时段的开始时间，支持自由改动）")
     with st.form("interval_form"):
-        st.markdown("开始时间：")
-        sy1, sy2, sy3, sy4, sy5, sy6 = st.columns(6)
-        with sy1:
-            start_year = st.text_input("年", value=str(default_start.year), key="sy")
-        with sy2:
-            start_month = st.text_input("月", value=f"{default_start.month:02d}", key="sm")
-        with sy3:
-            start_day = st.text_input("日", value=f"{default_start.day:02d}", key="sd")
-        with sy4:
-            start_hour = st.text_input("时", value=f"{default_start.hour:02d}", key="sh")
-        with sy5:
-            start_minute = st.text_input("分", value=f"{default_start.minute:02d}", key="smin")
-        with sy6:
-            start_second = st.text_input("秒", value=f"{default_start.second:02d}", key="ss")
+        # 表头：年、月、日、时、分、秒
+        th1, th2, th3, th4, th5, th6, th7 = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2])
+        with th2:
+            st.markdown("<div style='text-align: center; font-weight: bold;'>年</div>", unsafe_allow_html=True)
+        with th3:
+            st.markdown("<div style='text-align: center; font-weight: bold;'>月</div>", unsafe_allow_html=True)
+        with th4:
+            st.markdown("<div style='text-align: center; font-weight: bold;'>日</div>", unsafe_allow_html=True)
+        with th5:
+            st.markdown("<div style='text-align: center; font-weight: bold;'>时</div>", unsafe_allow_html=True)
+        with th6:
+            st.markdown("<div style='text-align: center; font-weight: bold;'>分</div>", unsafe_allow_html=True)
+        with th7:
+            st.markdown("<div style='text-align: center; font-weight: bold;'>秒</div>", unsafe_allow_html=True)
 
-        st.markdown("结束时间：")
-        ey1, ey2, ey3, ey4, ey5, ey6 = st.columns(6)
-        with ey1:
-            end_year = st.text_input("年 ", value=str(default_end.year), key="ey")
-        with ey2:
-            end_month = st.text_input("月 ", value=f"{default_end.month:02d}", key="em")
-        with ey3:
-            end_day = st.text_input("日 ", value=f"{default_end.day:02d}", key="ed")
-        with ey4:
-            end_hour = st.text_input("时 ", value=f"{default_end.hour:02d}", key="eh")
-        with ey5:
-            end_minute = st.text_input("分 ", value=f"{default_end.minute:02d}", key="emin")
-        with ey6:
-            end_second = st.text_input("秒 ", value=f"{default_end.second:02d}", key="es")
+        # 开始时间行
+        tr1, tr2, tr3, tr4, tr5, tr6, tr7 = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2])
+        with tr1:
+            st.markdown("<div style='line-height: 2.5rem; font-weight: bold;'>开始时间</div>", unsafe_allow_html=True)
+        with tr2:
+            start_year = st.text_input("开始年", value=str(default_start.year), key="sy", label_visibility="collapsed")
+        with tr3:
+            start_month = st.text_input("开始月", value=f"{default_start.month:02d}", key="sm", label_visibility="collapsed")
+        with tr4:
+            start_day = st.text_input("开始日", value=f"{default_start.day:02d}", key="sd", label_visibility="collapsed")
+        with tr5:
+            start_hour = st.text_input("开始时", value=f"{default_start.hour:02d}", key="sh", label_visibility="collapsed")
+        with tr6:
+            start_minute = st.text_input("开始分", value=f"{default_start.minute:02d}", key="smin", label_visibility="collapsed")
+        with tr7:
+            start_second = st.text_input("开始秒", value=f"{default_start.second:02d}", key="ss", label_visibility="collapsed")
 
-        run_col, stop_col, btn_col = st.columns([2, 2, 1])
+        # 结束时间行
+        er1, er2, er3, er4, er5, er6, er7 = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2])
+        with er1:
+            st.markdown("<div style='line-height: 2.5rem; font-weight: bold;'>结束时间</div>", unsafe_allow_html=True)
+        with er2:
+            end_year = st.text_input("结束年", value=str(default_end.year), key="ey", label_visibility="collapsed")
+        with er3:
+            end_month = st.text_input("结束月", value=f"{default_end.month:02d}", key="em", label_visibility="collapsed")
+        with er4:
+            end_day = st.text_input("结束日", value=f"{default_end.day:02d}", key="ed", label_visibility="collapsed")
+        with er5:
+            end_hour = st.text_input("结束时", value=f"{default_end.hour:02d}", key="eh", label_visibility="collapsed")
+        with er6:
+            end_minute = st.text_input("结束分", value=f"{default_end.minute:02d}", key="emin", label_visibility="collapsed")
+        with er7:
+            end_second = st.text_input("结束秒", value=f"{default_end.second:02d}", key="es", label_visibility="collapsed")
+
+        # 运行/停止秒数与添加按钮
+        run_col, stop_col, btn_col = st.columns([2, 4, 1.5])
         with run_col:
             run_seconds = st.text_input("多频集速运行秒数", value="30")
         with stop_col:
-            stop_seconds = st.text_input("停止秒数（若运行为0可不填）", value="780")
+            stop_seconds = st.text_input("停止秒数（若运行为0，此处自动为-）", value="780")
         with btn_col:
             st.write("")
             add_interval = st.form_submit_button("添加时段", use_container_width=True)

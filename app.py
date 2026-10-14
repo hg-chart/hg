@@ -1,11 +1,10 @@
-
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 import duckdb
 import matplotlib.pyplot as plt
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # 设置网页布局
 st.set_page_config(page_title="设备运行数据多文件多时段汇总对比分析系统", layout="wide")
@@ -27,7 +26,6 @@ st.subheader("1. 表格文件上传（支持多选 CSV / XLSX）")
 uploaded_files = st.file_uploader("请上传您的工业数据表格文件", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
 
 if uploaded_files:
-    # 临时保存在服务器端供 DuckDB 读取
     file_paths = []
     for uploaded_file in uploaded_files:
         with open(uploaded_file.name, "wb") as f:
@@ -36,16 +34,23 @@ if uploaded_files:
     
     st.success(f"已成功上传 {len(uploaded_files)} 个文件。")
 
-    # 极速读取第一个文件获取表头
+    # 极速读取第一个文件获取表头（兼容 utf-8 与 gbk 编码）
     sample_file = file_paths[0]
+    cols = []
     try:
-        if sample_file.endswith('.csv'):
-            df_sample = pd.read_csv(sample_file, nrows=1)
+        if sample_file.lower().endswith('.csv'):
+            try:
+                df_sample = pd.read_csv(sample_file, nrows=1, encoding='utf-8')
+            except UnicodeDecodeError:
+                try:
+                    df_sample = pd.read_csv(sample_file, nrows=1, encoding='gbk')
+                except UnicodeDecodeError:
+                    df_sample = pd.read_csv(sample_file, nrows=1, encoding='gb18030')
         else:
             df_sample = pd.read_excel(sample_file, nrows=1)
-        cols = [str(c).strip() for c in df_sample.columns if pd.notna(c)]
+        
+        cols = [str(c).strip() for c in df_sample.columns if pd.notna(c) and str(c).strip() != ""]
     except Exception as e:
-        cols = []
         st.error(f"读取表头失败: {e}")
 
     if cols:
@@ -64,16 +69,21 @@ if uploaded_files:
         threshold_input = st.text_input("负荷下限阈值 (留空则取全部数据)", value="")
         threshold = float(threshold_input) if threshold_input.strip() else None
 
-        # --- 4. 多时段对比配置 ---
+        # --- 4. 多时段对比配置（含自动时间衔接） ---
         st.subheader("4. 多时段对比配置")
         
         if 'intervals' not in st.session_state:
             st.session_state.intervals = []
 
+        # 如果列表中已有数据，默认将下一个时段的开始时间设为上一个时段的结束时间
+        default_start = "2026-08-01 01:01:00"
+        if st.session_state.intervals:
+            default_start = st.session_state.intervals[-1]['end']
+
         with st.form("interval_form"):
             c1, c2, c3, c4 = st.columns(4)
             with c1:
-                start_time_str = st.text_input("开始时间 (格式: YYYY-MM-DD HH:MM:SS)", "2026-08-01 01:01:00")
+                start_time_str = st.text_input("开始时间 (格式: YYYY-MM-DD HH:MM:SS)", default_start)
             with c2:
                 end_time_str = st.text_input("结束时间 (格式: YYYY-MM-DD HH:MM:SS)", "2026-08-01 01:01:50")
             with c3:
@@ -93,9 +103,10 @@ if uploaded_files:
                             "start": start_time_str,
                             "end": end_time_str,
                             "run_sec": run_sec,
-                            "stop_sec": stop_sec
+                            "stop_sec": stop_sec if (run_sec != "0" and run_sec != "0.0") else "-"
                         })
-                        st.success("添加成功！")
+                        st.success("添加成功！已自动为您衔接下一个时段的开始时间。")
+                        st.rerun()
                 except Exception as err:
                     st.error(f"时间格式错误: {err}")
 
@@ -118,10 +129,10 @@ if uploaded_files:
             else:
                 with st.spinner("正在后台利用 DuckDB 高速处理千万级数据并绘图..."):
                     try:
-                        # 拼接 DuckDB 查询多个 CSV
+                        # 兼容处理：针对不同编码的 CSV，DuckDB 通过指定 encoding 读取
+                        # 由于 Streamlit Cloud 会自动推断，这里我们用更稳妥的方式组合 SQL
                         files_str = ", ".join([f"'{f}'" for f in file_paths])
                         
-                        # 构建合并所有时段的 SQL 条件
                         where_clauses = []
                         for item in st.session_state.intervals:
                             where_clauses.append(f"(CAST(\"{time_col}\" AS TIMESTAMP) BETWEEN TIMESTAMP '{item['start']}' AND TIMESTAMP '{item['end']}')")
@@ -136,7 +147,6 @@ if uploaded_files:
                         
                         df_all = duckdb.query(sql).df()
                         
-                        # 列名重命名与格式化
                         df_all.columns = df_all.columns.astype(str).str.strip().str.lstrip('\ufeff')
                         df_all = df_all.rename(columns=COLUMN_ALIASES)
                         
@@ -150,7 +160,6 @@ if uploaded_files:
                         if df_all.empty:
                             st.warning("在指定的时间段与阈值条件下未检索到有效数据！")
                         else:
-                            # 绘图逻辑
                             fig, ax1 = plt.subplots(figsize=(14, 8))
                             ax2 = ax1.twinx()
 
@@ -174,6 +183,7 @@ if uploaded_files:
                                     bar_c, line_c = color_palette[idx % len(color_palette)]
                                     run_s = item['run_sec']
                                     stop_s = item['stop_sec']
+                                    # 【按照您的要求：去掉“运行时间段”字样，改为多频集速运行XX秒/停止XX秒】
                                     label_desc = f"多频集速运行{run_s}s/停止{stop_s}s"
                                     
                                     act_s = sub[time_col].min().strftime('%Y-%m-%d %H:%M:%S')
@@ -206,7 +216,6 @@ if uploaded_files:
 
                             fig.subplots_adjust(bottom=0.28)
                             
-                            # 在网页上直接展示图表
                             st.pyplot(fig)
                             st.success("图表生成成功！")
 

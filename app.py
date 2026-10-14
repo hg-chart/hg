@@ -418,7 +418,6 @@ else:
     except Exception:
         pass
 
-# 计算默认结束时间（向后推50分钟）
 try:
     default_end_dt = datetime.strptime(default_start_str, "%Y-%m-%d %H:%M:%S") + timedelta(minutes=50)
     default_end_str = default_end_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -426,20 +425,21 @@ except Exception:
     default_end_str = default_start_str
 
 # ============================================================
-# 2. 放在下方的“添加新时段”表单（改为完全用纯数字/文本输入，后端拼接，手机端绝不折行）
+# 2. 放在下方的“添加新时段”表单（纯文本输入框并排在同一行）
 # ============================================================
 with st.container(border=True):
-    st.markdown("➕ **添加新时段**（直接输入日期和时间，后端自动合成为标准格式）")
+    st.markdown("➕ **添加新时段**（直接在纯文本框中输入，日期和时间完美并排在同一行）")
     with st.form("interval_form"):
-        st.markdown("📅 **开始时间**（格式：`YYYY-MM-DD` 与 `HH:MM:SS`）")
-        sc1, sc2 = st.columns([1.2, 1])
+        
+        st.markdown("📅 **开始时间**")
+        sc1, sc2 = st.columns(2)
         with sc1:
             start_date_input = st.text_input("开始日期", value=default_start_str[:10], placeholder="例如: 2026-10-14")
         with sc2:
             start_time_input = st.text_input("开始时间", value=default_start_str[11:], placeholder="例如: 02:12:04")
 
-        st.markdown("📅 **结束时间**（格式：`YYYY-MM-DD` 与 `HH:MM:SS`）")
-        ec1, ec2 = st.columns([1.2, 1])
+        st.markdown("📅 **结束时间**")
+        ec1, ec2 = st.columns(2)
         with ec1:
             end_date_input = st.text_input("结束日期", value=default_end_str[:10], placeholder="例如: 2026-10-14")
         with ec2:
@@ -459,7 +459,7 @@ with st.container(border=True):
                 start_full = f"{start_date_input.strip()} {start_time_input.strip()}"
                 end_full = f"{end_date_input.strip()} {end_time_input.strip()}"
                 
-                # 后端将其转换为标准格式并校验
+                # 后端自动解析验证
                 start_dt = pd.to_datetime(start_full)
                 end_dt = pd.to_datetime(end_full)
 
@@ -480,7 +480,7 @@ with st.container(border=True):
                     st.success("时段添加成功！")
                     st.rerun()
             except Exception as exc:
-                st.error(f"时间格式错误，请检查输入（正确格式如：2026-10-14 与 02:12:04）：{exc}")
+                st.error(f"时间格式错误，请检查输入（格式如：日期输入 2026-10-14，时间输入 02:12:04）：{exc}")
 
 st.markdown("---")
 

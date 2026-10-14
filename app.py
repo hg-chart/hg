@@ -25,7 +25,6 @@ st.set_page_config(
 
 matplotlib.rcParams["axes.unicode_minus"] = False
 
-# packages.txt 安装文泉驿字体。这里既检查字体名称，也主动加载常见字体文件。
 FONT_FILES = [
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
     "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
@@ -122,6 +121,12 @@ if "saved_templates" not in st.session_state:
     st.session_state.saved_templates = load_persistent_templates()
 if "intervals" not in st.session_state:
     st.session_state.intervals = []
+
+# 用于保存图表渲染状态，防止下载后图表消失
+if "plotted_fig_bytes" not in st.session_state:
+    st.session_state.plotted_fig_bytes = None
+if "plotted_title" not in st.session_state:
+    st.session_state.plotted_title = ""
 
 
 # ============================================================
@@ -227,10 +232,15 @@ if not columns:
 st.subheader("2. 数据列选择配置")
 col1, col2, col3 = st.columns(3)
 
+# 默认负荷左纵轴为 W3.UNIT1.10DEHDCSAI03（如果存在于列中）
+default_load_index = min(1, len(columns) - 1)
+if "W3.UNIT1.10DEHDCSAI03" in columns:
+    default_load_index = columns.index("W3.UNIT1.10DEHDCSAI03")
+
 with col1:
     time_col = st.selectbox("横坐标轴（时间列）", columns, index=0)
 with col2:
-    load_col = st.selectbox("负荷左纵轴", columns, index=min(1, len(columns) - 1))
+    load_col = st.selectbox("负荷左纵轴", columns, index=default_load_index)
 with col3:
     pressure_col = st.selectbox("压差右纵轴", columns, index=min(2, len(columns) - 1))
 
@@ -284,9 +294,7 @@ with st.expander("📁 历史时段方案管理", expanded=False):
                     st.success(f"方案“{template_name.strip()}”已保存。")
                     st.rerun()
 
-# ============================================================
-# 上方：红色框模式（已添加的时段表格列表及操作按钮）
-# ============================================================
+# 1. 先在上方展示已添加的对比时段表格及管理按钮区
 if st.session_state.intervals:
     st.write("当前已添加的对比时段（图表按此顺序依次排列）。勾选“选择”后，可在下方修改、上移/下移或删除：")
 
@@ -393,7 +401,7 @@ if st.session_state.intervals:
 
     st.markdown("---")
 
-# 自动衔接时间计算：若已有时段，新添加时段的开始时间默认自动衔接上一时段结束时间
+# 自动衔接时间计算
 default_start = datetime.now()
 if st.session_state.intervals:
     try:
@@ -415,13 +423,10 @@ else:
 
 default_end = default_start + timedelta(minutes=50)
 
-# ============================================================
-# 下方：绿色框模式（图二的网格化独立输入框：年/月/日/时/分/秒）
-# ============================================================
+# 2. 放在下方的“添加新时段”表单
 with st.container(border=True):
     st.markdown("➕ **添加新时段**（第一个时段的结束时间会自动衔接为下一个时段的开始时间，支持自由改动）")
     with st.form("interval_form"):
-        # 表头：年、月、日、时、分、秒
         th1, th2, th3, th4, th5, th6, th7 = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2])
         with th2:
             st.markdown("<div style='text-align: center; font-weight: bold;'>年</div>", unsafe_allow_html=True)
@@ -436,7 +441,6 @@ with st.container(border=True):
         with th7:
             st.markdown("<div style='text-align: center; font-weight: bold;'>秒</div>", unsafe_allow_html=True)
 
-        # 开始时间行
         tr1, tr2, tr3, tr4, tr5, tr6, tr7 = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2])
         with tr1:
             st.markdown("<div style='line-height: 2.5rem; font-weight: bold;'>开始时间</div>", unsafe_allow_html=True)
@@ -453,7 +457,6 @@ with st.container(border=True):
         with tr7:
             start_second = st.text_input("开始秒", value=f"{default_start.second:02d}", key="ss", label_visibility="collapsed")
 
-        # 结束时间行
         er1, er2, er3, er4, er5, er6, er7 = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2])
         with er1:
             st.markdown("<div style='line-height: 2.5rem; font-weight: bold;'>结束时间</div>", unsafe_allow_html=True)
@@ -470,7 +473,6 @@ with st.container(border=True):
         with er7:
             end_second = st.text_input("结束秒", value=f"{default_end.second:02d}", key="es", label_visibility="collapsed")
 
-        # 运行/停止秒数与添加按钮
         run_col, stop_col, btn_col = st.columns([2, 4, 1.5])
         with run_col:
             run_seconds = st.text_input("多频集速运行秒数", value="30")
@@ -527,7 +529,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
             try:
                 df = df_raw.copy()
 
-                # 统一“负荷/压差”别名，同时同步更新实际使用的列名，避免 KeyError
                 rename_map = {
                     col: COLUMN_ALIASES[col]
                     for col in df.columns
@@ -620,7 +621,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                             part[actual_time_col].dt.strftime("%m-%d %H:%M:%S").tolist()
                         )
 
-                        # 负荷：填充面积 + 细线；压差：另一纵轴曲线
                         ax1.fill_between(
                             x_values,
                             part[actual_load_col].to_numpy(),
@@ -683,10 +683,8 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     )
 
                     fig.subplots_adjust(bottom=0.32, top=0.90, left=0.09, right=0.91)
-                    st.pyplot(fig, use_container_width=True)
-                    st.success("图表生成成功！")
-
-                    # 提供 PNG 下载，方便保存或转发
+                    
+                    # 将生成的图表保存到 session_state 中，确保下载后不会消失
                     import io
                     image_buffer = io.BytesIO()
                     fig.savefig(
@@ -696,15 +694,22 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                         bbox_inches="tight",
                         facecolor="white",
                     )
-                    st.download_button(
-                        "⬇️ 下载趋势图 PNG",
-                        data=image_buffer.getvalue(),
-                        file_name="设备运行数据多时段对比趋势图.png",
-                        mime="image/png",
-                    )
+                    st.session_state.plotted_fig_bytes = image_buffer.getvalue()
+                    st.session_state.plotted_title = title
 
             except Exception as exc:
                 st.error(f"计算或绘图过程中发生错误：{exc}")
             finally:
                 if fig is not None:
                     plt.close(fig)
+
+# 持续渲染已保存的图表，确保下载或其他操作后图表依然留在页面上
+if st.session_state.plotted_fig_bytes is not None:
+    st.success("图表生成成功！")
+    st.image(st.session_state.plotted_fig_bytes, caption=st.session_state.plotted_title, use_container_width=True)
+    st.download_button(
+        "⬇️ 下载趋势图 PNG",
+        data=st.session_state.plotted_fig_bytes,
+        file_name="设备运行数据多时段对比趋势图.png",
+        mime="image/png",
+    )

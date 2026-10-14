@@ -2,32 +2,14 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
 import os
-import urllib.request
 from datetime import datetime, timedelta
 
 # 设置网页布局
 st.set_page_config(page_title="设备运行数据多文件多时段汇总对比分析系统", layout="wide")
 
-# 【终极中文字体强制修复方案】在云端自动下载并注册中文字体
-@st.cache_resource
-def load_chinese_font():
-    font_path = "NotoSansSC-Regular.ttf"
-    if not os.path.exists(font_path):
-        try:
-            url = "https://github.com/google/fonts/raw/main/ofl/notosanssc/NotoSansSC-Regular.ttf"
-            urllib.request.urlretrieve(url, font_path)
-        except Exception:
-            pass
-    if os.path.exists(font_path):
-        fm.fontManager.add_font(font_path)
-        prop = fm.FontProperties(fname=font_path)
-        return prop.get_name()
-    return 'sans-serif'
-
-font_name = load_chinese_font()
-plt.rcParams['font.sans-serif'] = [font_name, 'WenQuanYi Micro Hei', 'DejaVu Sans', 'sans-serif']
+# 【系统级字体绑定】直接调用通过 packages.txt 安装的文泉驿中文字体
+plt.rcParams['font.sans-serif'] = ['WenQuanYi Zen Hei', 'WenQuanYi Micro Hei', 'sans-serif']
 plt.rcParams['axes.unicode_minus'] = False
 
 COLUMN_ALIASES = {
@@ -53,7 +35,6 @@ if uploaded_files:
     
     st.success(f"已成功上传 {len(uploaded_files)} 个文件。")
 
-    # 极速读取所有文件并兼容多编码
     try:
         for f_path in file_paths:
             if f_path.lower().endswith('.csv'):
@@ -242,9 +223,6 @@ if uploaded_files:
                             x_indices = range(len(df_final))
                             time_labels = df_final[time_col].dt.strftime('%m-%d %H:%M:%S').tolist()
 
-                            # 显式将字体属性绑定到绘图对象，确保云端百分之百渲染中文字体
-                            plt.rcParams['font.family'] = font_name
-
                             fig, ax1 = plt.subplots(figsize=(14, 8))
                             ax2 = ax1.twinx()
 
@@ -284,7 +262,7 @@ if uploaded_files:
                             fig.subplots_adjust(bottom=0.28)
                             
                             st.pyplot(fig)
-                            st.success("图表生成成功！多时段独立配色与中文标题图例已完美呈现！")
+                            st.success("图表生成成功！中文字体与多时段独立配色已完美呈现！")
 
                     except Exception as err:
                         st.error(f"计算或绘图过程中发生错误: {err}")

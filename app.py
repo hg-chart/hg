@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 # 设置网页布局
 st.set_page_config(page_title="设备运行数据多文件多时段汇总对比分析系统", layout="wide")
 
-# 【系统级字体绑定】直接调用通过 packages.txt 安装的文泉驿中文字体
+# 【系统级字体绑定】文泉驿正黑
 plt.rcParams['font.sans-serif'] = ['WenQuanYi Zen Hei', 'WenQuanYi Micro Hei', 'sans-serif']
 plt.rcParams['axes.unicode_minus'] = False
 
@@ -20,23 +20,62 @@ COLUMN_ALIASES = {
 st.title("📊 设备运行数据多文件多时段汇总对比分析系统")
 st.markdown("---")
 
-# --- 1. 文件上传区域 ---
-st.subheader("1. 表格文件上传（支持多选 CSV / XLSX）")
-uploaded_files = st.file_uploader("请上传您的工业数据表格文件", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
+# 初始化全局历史方案与历史文件库
+if 'saved_templates' not in st.session_state:
+    st.session_state.saved_templates = {
+        "默认测试方案 (5个时段示例)": [
+            {"start": "2026-08-01 01:01:00", "end": "2026-08-05 01:01:50", "run_sec": "0", "stop_sec": "-"},
+            {"start": "2026-09-19 01:01:50", "end": "2026-09-25 13:09:50", "run_sec": "0", "stop_sec": "-"},
+            {"start": "2026-09-25 13:10:50", "end": "2026-09-29 13:09:50", "run_sec": "30", "stop_sec": "780"},
+            {"start": "2026-10-4 13:09:50", "end": "2026-10-12 15:20:50", "run_sec": "30", "stop_sec": "780"},
+            {"start": "2026-10-12 15:20:51", "end": "2026-10-14 15:20:50", "run_sec": "60", "stop_sec": "300"}
+        ]
+    }
+
+if 'history_files' not in st.session_state:
+    st.session_state.history_files = {} # 格式: {filename: file_bytes}
+
+# --- 1. 文件上传与历史文件库管理 ---
+st.subheader("1. 表格文件管理（支持新上传与历史文件快捷调用）")
+
+uploaded_files = st.file_uploader("上传新的工业数据表格文件 (CSV / XLSX)", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
 
 if uploaded_files:
-    file_paths = []
-    dfs_list = []
-    
     for uploaded_file in uploaded_files:
-        with open(uploaded_file.name, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        file_paths.append(uploaded_file.name)
-    
-    st.success(f"已成功上传 {len(uploaded_files)} 个文件。")
+        file_bytes = uploaded_file.getvalue()
+        file_name = uploaded_file.name
+        # 存入历史文件库
+        st.session_state.history_files[file_name] = file_bytes
+        # 同时写到本地供读取
+        with open(file_name, "wb") as f:
+            f.write(file_bytes)
+
+# 如果历史文件库中有文件，提供多选快捷加载框
+active_file_paths = []
+if st.session_state.history_files:
+    with st.expander("📁 历史上传文件库（免重复上传，随时勾选调用）", expanded=True):
+        all_hist_names = list(st.session_state.history_files.keys())
+        selected_hist_names = st.multiselect("勾选需要参与本次分析的历史文件", all_hist_names, default=all_hist_names)
+        
+        # 将勾选的历史文件写回运行目录
+        for fname in selected_hist_names:
+            with open(fname, "wb") as f:
+                f.write(st.session_state.history_files[fname])
+            active_file_paths.append(fname)
+        
+        if st.button("🗑️ 清空历史文件库"):
+            st.session_state.history_files = {}
+            st.rerun()
+else:
+    if uploaded_files:
+        active_file_paths = [f.name for f in uploaded_files]
+
+if active_file_paths:
+    st.success(f"当前已加载 {len(active_file_paths)} 个文件参与分析。")
 
     try:
-        for f_path in file_paths:
+        dfs_list = []
+        for f_path in active_file_paths:
             if f_path.lower().endswith('.csv'):
                 df_temp = None
                 for enc in ['utf-8', 'gbk', 'gb18030', 'latin1']:
@@ -77,11 +116,30 @@ if uploaded_files:
         threshold_input = st.text_input("负荷下限阈值 (留空则取全部数据)", value="")
         threshold = float(threshold_input) if threshold_input.strip() else None
 
-        # --- 4. 多时段对比配置 ---
-        st.subheader("4. 多时段对比配置（自动时间衔接）")
+        # --- 4. 多时段对比配置（含历史方案存取功能） ---
+        st.subheader("4. 多时段对比配置（历史方案保存与调用）")
         
         if 'intervals' not in st.session_state:
             st.session_state.intervals = []
+
+        with st.expander("📁 历史时段方案管理（保存与一键加载）", expanded=False):
+            template_names = list(st.session_state.saved_templates.keys())
+            col_t1, col_t2 = st.columns([2, 1])
+            with col_t1:
+                selected_template = st.selectbox("选择已保存的历史方案", template_names)
+                if st.button("📥 一键加载该历史方案"):
+                    st.session_state.intervals = [dict(item) for item in st.session_state.saved_templates[selected_template]]
+                    st.success(f"成功加载历史方案：【{selected_template}】！")
+                    st.rerun()
+            with col_t2:
+                new_template_name = st.text_input("给当前时段起个名字", value="我的常用方案")
+                if st.button("💾 保存当前时段为历史方案"):
+                    if not st.session_state.intervals:
+                        st.warning("当前还没有添加任何时段，无法保存！")
+                    else:
+                        st.session_state.saved_templates[new_template_name] = [dict(item) for item in st.session_state.intervals]
+                        st.success(f"方案【{new_template_name}】保存成功！")
+                        st.rerun()
 
         default_dt = datetime.now()
         if st.session_state.intervals:
@@ -101,7 +159,7 @@ if uploaded_files:
         default_end_dt = default_dt + timedelta(minutes=50)
 
         with st.form("interval_form"):
-            st.markdown("🕒 **开始时间设置**")
+            st.markdown("🕒 **开始时间设置 (自动衔接)**")
             sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
             with sc1: s_y = st.text_input("开始-年", value=str(default_dt.year))
             with sc2: s_m = st.text_input("开始-月", value=f"{default_dt.month:02d}")
@@ -262,7 +320,7 @@ if uploaded_files:
                             fig.subplots_adjust(bottom=0.28)
                             
                             st.pyplot(fig)
-                            st.success("图表生成成功！中文字体与多时段独立配色已完美呈现！")
+                            st.success("图表生成成功！")
 
                     except Exception as err:
                         st.error(f"计算或绘图过程中发生错误: {err}")

@@ -33,7 +33,7 @@ if 'saved_templates' not in st.session_state:
     }
 
 if 'history_files' not in st.session_state:
-    st.session_state.history_files = {} # 格式: {filename: file_bytes}
+    st.session_state.history_files = {}
 
 # --- 1. 文件上传与历史文件库管理 ---
 st.subheader("1. 表格文件管理（支持新上传与历史文件快捷调用）")
@@ -44,20 +44,16 @@ if uploaded_files:
     for uploaded_file in uploaded_files:
         file_bytes = uploaded_file.getvalue()
         file_name = uploaded_file.name
-        # 存入历史文件库
         st.session_state.history_files[file_name] = file_bytes
-        # 同时写到本地供读取
         with open(file_name, "wb") as f:
             f.write(file_bytes)
 
-# 如果历史文件库中有文件，提供多选快捷加载框
 active_file_paths = []
 if st.session_state.history_files:
     with st.expander("📁 历史上传文件库（免重复上传，随时勾选调用）", expanded=True):
         all_hist_names = list(st.session_state.history_files.keys())
         selected_hist_names = st.multiselect("勾选需要参与本次分析的历史文件", all_hist_names, default=all_hist_names)
         
-        # 将勾选的历史文件写回运行目录
         for fname in selected_hist_names:
             with open(fname, "wb") as f:
                 f.write(st.session_state.history_files[fname])
@@ -116,8 +112,8 @@ if active_file_paths:
         threshold_input = st.text_input("负荷下限阈值 (留空则取全部数据)", value="")
         threshold = float(threshold_input) if threshold_input.strip() else None
 
-        # --- 4. 多时段对比配置（含历史方案存取功能） ---
-        st.subheader("4. 多时段对比配置（历史方案保存与调用）")
+        # --- 4. 多时段对比配置（紧凑同行版） ---
+        st.subheader("4. 多时段对比配置（历史方案与紧凑输入）")
         
         if 'intervals' not in st.session_state:
             st.session_state.intervals = []
@@ -159,23 +155,28 @@ if active_file_paths:
         default_end_dt = default_dt + timedelta(minutes=50)
 
         with st.form("interval_form"):
-            st.markdown("🕒 **开始时间设置 (自动衔接)**")
-            sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
-            with sc1: s_y = st.text_input("开始-年", value=str(default_dt.year))
-            with sc2: s_m = st.text_input("开始-月", value=f"{default_dt.month:02d}")
-            with sc3: s_d = st.text_input("开始-日", value=f"{default_dt.day:02d}")
-            with sc4: s_h = st.text_input("开始-时", value=f"{default_dt.hour:02d}")
-            with sc5: s_min = st.text_input("开始-分", value=f"{default_dt.minute:02d}")
-            with sc6: s_sec = st.text_input("开始-秒", value=f"{default_dt.second:02d}")
+            # 将开始与结束紧凑整合在同一行区域
+            col_start_box, col_end_box = st.columns(2)
 
-            st.markdown("🕒 **结束时间设置**")
-            ec1, ec2, ec3, ec4, ec5, ec6 = st.columns(6)
-            with ec1: e_y = st.text_input("结束-年", value=str(default_end_dt.year))
-            with ec2: e_m = st.text_input("结束-月", value=f"{default_end_dt.month:02d}")
-            with ec3: e_d = st.text_input("结束-日", value=f"{default_end_dt.day:02d}")
-            with ec4: e_h = st.text_input("结束-时", value=f"{default_end_dt.hour:02d}")
-            with ec5: e_min = st.text_input("结束-分", value=f"{default_end_dt.minute:02d}")
-            with ec6: e_sec = st.text_input("结束-秒", value=f"{default_end_dt.second:02d}")
+            with col_start_box:
+                st.markdown("🕒 **开始时间**")
+                sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
+                with sc1: s_y = st.text_input("年", value=str(default_dt.year))
+                with sc2: s_m = st.text_input("月", value=f"{default_dt.month:02d}")
+                with sc3: s_d = st.text_input("日", value=f"{default_dt.day:02d}")
+                with sc4: s_h = st.text_input("时", value=f"{default_dt.hour:02d}")
+                with sc5: s_min = st.text_input("分", value=f"{default_dt.minute:02d}")
+                with sc6: s_sec = st.text_input("秒", value=f"{default_dt.second:02d}")
+
+            with col_end_box:
+                st.markdown("🕒 **结束时间**")
+                ec1, ec2, ec3, ec4, ec5, ec6 = st.columns(6)
+                with ec1: e_y = st.text_input("年 ", value=str(default_end_dt.year))
+                with ec2: e_m = st.text_input("月 ", value=f"{default_end_dt.month:02d}")
+                with ec3: e_d = st.text_input("日 ", value=f"{default_end_dt.day:02d}")
+                with ec4: e_h = st.text_input("时 ", value=f"{default_end_dt.hour:02d}")
+                with ec5: e_min = st.text_input("分 ", value=f"{default_end_dt.minute:02d}")
+                with ec6: e_sec = st.text_input("秒 ", value=f"{default_end_dt.second:02d}")
 
             rc1, rc2 = st.columns(2)
             with rc1:

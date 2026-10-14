@@ -2,7 +2,6 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
 import os
 import json
 from datetime import datetime, timedelta
@@ -10,13 +9,8 @@ from datetime import datetime, timedelta
 # 设置网页布局
 st.set_page_config(page_title="设备运行数据多文件多时段汇总对比分析系统", layout="wide")
 
-# 【彻底解决中文方块】直接显式注册并绑定文泉驿正黑字体
-font_path = "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
-if os.path.exists(font_path):
-    fm.fontManager.add_font(font_path)
-    plt.rcParams['font.family'] = 'WenQuanYi Zen Hei'
-else:
-    plt.rcParams['font.sans-serif'] = ['WenQuanYi Micro Hei', 'Droid Sans Fallback', 'sans-serif']
+# 【稳定安全的中文配置】直接指定系统已通过 packages.txt 安装的文泉驿正黑
+plt.rcParams['font.sans-serif'] = ['WenQuanYi Zen Hei', 'WenQuanYi Micro Hei', 'sans-serif']
 plt.rcParams['axes.unicode_minus'] = False
 
 COLUMN_ALIASES = {
@@ -166,7 +160,7 @@ if active_file_paths:
                         st.success(f"方案【{new_template_name}】已成功持久化保存到硬盘！")
                         st.rerun()
 
-        # 【精准恢复自动时间衔接】：获取上一个时段的结束时间作为新时段的开始时间
+        # 【时间自动衔接逻辑】：精准衔接上一时段结束时间
         default_dt = datetime.now()
         if st.session_state.intervals:
             try:
@@ -184,7 +178,7 @@ if active_file_paths:
 
         default_end_dt = default_dt + timedelta(minutes=50)
 
-        # 核心改动：用 st.columns([1, 1]) 把录入表单严格限制在左侧半屏范围内，右侧留白
+        # 布局：表单严格控制在左侧半屏范围内，减少鼠标移动
         form_wrapper, _ = st.columns([1, 1])
 
         with form_wrapper:

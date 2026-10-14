@@ -248,7 +248,7 @@ if threshold_text.strip():
 
 
 # ============================================================
-# 6. 多时段配置与历史方案（精简紧凑版 + 底部新增窗口）
+# 6. 多时段配置与历史方案
 # ============================================================
 
 st.subheader("4. 多时段对比配置")
@@ -284,9 +284,22 @@ with st.expander("📁 历史时段方案管理", expanded=False):
                     st.success(f"方案“{template_name.strip()}”已保存。")
                     st.rerun()
 
-# 已有时段列表展示区（采用紧凑表格/容器展示，支持滚动与行内操作）
+# 已有时段列表展示区（带有明确表头，方便识别）
 if st.session_state.intervals:
     st.markdown("📋 **当前已添加的对比时段列表：**")
+    
+    # 添加明确定向的表头
+    h_cols = st.columns([0.5, 2.3, 2.3, 0.9, 0.9, 0.8, 0.8, 0.8, 0.8])
+    with h_cols[0]: st.markdown("**序号**")
+    with h_cols[1]: st.markdown("**开始时间**")
+    with h_cols[2]: st.markdown("**结束时间**")
+    with h_cols[3]: st.markdown("**运行秒数**")
+    with h_cols[4]: st.markdown("**停止秒数**")
+    with h_cols[5]: st.markdown("**操作**")
+    with h_cols[6]: st.markdown("")
+    with h_cols[7]: st.markdown("")
+    with h_cols[8]: st.markdown("")
+
     for idx, interval in enumerate(st.session_state.intervals):
         with st.container(border=True):
             cols = st.columns([0.5, 2.3, 2.3, 0.9, 0.9, 0.8, 0.8, 0.8, 0.8])
@@ -370,27 +383,60 @@ else:
 
 default_end = default_start + timedelta(minutes=50)
 
-# 放在已有时间段窗口下方的精简添加表单（参考 gemini多频集速.py）
+# 放在已有时间段窗口下方的添加表单（采用年月日时分秒独立小格子输入，并带有清晰的运行/停止秒数标注）
 with st.form("interval_form"):
     st.markdown("➕ **添加新时段（开始时间已自动衔接上一时段结束时间）**")
     
-    # 采用更紧凑的单行或双行对齐布局
-    f_cols = st.columns([1.1, 1.1, 0.6, 0.6])
-    with f_cols[0]:
-        start_str_input = st.text_input("开始时间 (YYYY-MM-DD HH:MM:SS)", value=default_start.strftime("%Y-%m-%d %H:%M:%S"))
-    with f_cols[1]:
-        end_str_input = st.text_input("结束时间 (YYYY-MM-DD HH:MM:SS)", value=default_end.strftime("%Y-%m-%d %H:%M:%S"))
-    with f_cols[2]:
+    st.markdown("🕒 **开始时间**")
+    sy1, sy2, sy3, sy4, sy5, sy6 = st.columns(6)
+    with sy1:
+        start_year = st.text_input("年", value=str(default_start.year), key="sy")
+    with sy2:
+        start_month = st.text_input("月", value=f"{default_start.month:02d}", key="sm")
+    with sy3:
+        start_day = st.text_input("日", value=f"{default_start.day:02d}", key="sd")
+    with sy4:
+        start_hour = st.text_input("时", value=f"{default_start.hour:02d}", key="sh")
+    with sy5:
+        start_minute = st.text_input("分", value=f"{default_start.minute:02d}", key="smin")
+    with sy6:
+        start_second = st.text_input("秒", value=f"{default_start.second:02d}", key="ss")
+
+    st.markdown("🕒 **结束时间**")
+    ey1, ey2, ey3, ey4, ey5, ey6 = st.columns(6)
+    with ey1:
+        end_year = st.text_input("年 ", value=str(default_end.year), key="ey")
+    with ey2:
+        end_month = st.text_input("月 ", value=f"{default_end.month:02d}", key="em")
+    with ey3:
+        end_day = st.text_input("日 ", value=f"{default_end.day:02d}", key="ed")
+    with ey4:
+        end_hour = st.text_input("时 ", value=f"{default_end.hour:02d}", key="eh")
+    with ey5:
+        end_minute = st.text_input("分 ", value=f"{default_end.minute:02d}", key="emin")
+    with ey6:
+        end_second = st.text_input("秒 ", value=f"{default_end.second:02d}", key="es")
+
+    run_col, stop_col = st.columns(2)
+    with run_col:
         run_seconds = st.text_input("运行秒数", value="30")
-    with f_cols[3]:
-        stop_seconds = st.text_input("停止秒数", value="780")
+    with stop_col:
+        stop_seconds = st.text_input("停止秒数（若运行为0可不填）", value="780")
 
     add_interval = st.form_submit_button("➕ 确认添加时段", use_container_width=True)
 
     if add_interval:
         try:
-            start_dt = pd.to_datetime(start_str_input.strip())
-            end_dt = pd.to_datetime(end_str_input.strip())
+            start_string = (
+                f"{start_year.strip()}-{start_month.strip().zfill(2)}-{start_day.strip().zfill(2)} "
+                f"{start_hour.strip().zfill(2)}:{start_minute.strip().zfill(2)}:{start_second.strip().zfill(2)}"
+            )
+            end_string = (
+                f"{end_year.strip()}-{end_month.strip().zfill(2)}-{end_day.strip().zfill(2)} "
+                f"{end_hour.strip().zfill(2)}:{end_minute.strip().zfill(2)}:{end_second.strip().zfill(2)}"
+            )
+            start_dt = pd.to_datetime(start_string)
+            end_dt = pd.to_datetime(end_string)
 
             if start_dt >= end_dt:
                 st.error("开始时间必须早于结束时间！")
@@ -398,8 +444,8 @@ with st.form("interval_form"):
                 run_text = run_seconds.strip() or "0"
                 stop_text = "-" if run_text in ("0", "0.0") else (stop_seconds.strip() or "-")
                 st.session_state.intervals.append({
-                    "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                    "end": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                    "start": start_string,
+                    "end": end_string,
                     "run_sec": run_text,
                     "stop_sec": stop_text,
                 })

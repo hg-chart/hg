@@ -2,14 +2,23 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import os
 from datetime import datetime, timedelta
 
 # 设置网页布局
 st.set_page_config(page_title="设备运行数据多文件多时段汇总对比分析系统", layout="wide")
 
-# 设置中文字体支持
-plt.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS', 'sans-serif']
+# 完美解决云端 Linux 乱码：自动寻找支持中文的字体
+def get_chinese_font():
+    for f in fm.fontManager.ttflist:
+        name = f.name.lower()
+        if any(k in name for k in ['hei', 'sans', 'dejavu', 'arial unicode', 'wqy', 'droid', 'noto']):
+            return f.name
+    return 'sans-serif'
+
+chinese_font = get_chinese_font()
+plt.rcParams['font.sans-serif'] = [chinese_font, 'DejaVu Sans', 'Arial Unicode MS', 'sans-serif']
 plt.rcParams['axes.unicode_minus'] = False
 
 COLUMN_ALIASES = {
@@ -84,7 +93,6 @@ if uploaded_files:
         if 'intervals' not in st.session_state:
             st.session_state.intervals = []
 
-        # 默认起始时间（优先取上一时段结束时间，其次取表格最早时间）
         default_dt = datetime.now()
         if st.session_state.intervals:
             try:
@@ -167,7 +175,7 @@ if uploaded_files:
             if not st.session_state.intervals:
                 st.warning("请至少添加一个对比时间段！")
             else:
-                with st.spinner("正在高速处理数据并绘图..."):
+                with st.spinner("正在高速处理数据并应用多段独立配色绘图..."):
                     try:
                         df_all = df_all_raw.copy()
                         df_all = df_all.rename(columns=COLUMN_ALIASES)
@@ -179,9 +187,7 @@ if uploaded_files:
                         if threshold is not None:
                             df_all = df_all[df_all[load_col] >= threshold].reset_index(drop=True)
 
-                        fig, ax1 = plt.subplots(figsize=(14, 8))
-                        ax2 = ax1.twinx()
-
+                        # 完美的调色板（与桌面端一致：红、绿、蓝、紫等区分不同时段）
                         color_palette = [
                             ("#85B2FF", "#1E3F66"),
                             ("#52C41A", "#135200"),
@@ -193,39 +199,61 @@ if uploaded_files:
                             ("#D3F261", "#5B8C00")
                         ]
 
-                        has_valid_data = False
+                        processed_dfs = []
                         for idx, item in enumerate(st.session_state.intervals):
                             s_dt = pd.to_datetime(item['start'])
                             e_dt = pd.to_datetime(item['end'])
-                            sub = df_all[(df_all[time_col] >= s_dt) & (df_all[time_col] <= e_dt)]
+                            sub = df_all[(df_all[time_col] >= s_dt) & (df_all[time_col] <= e_dt)].copy()
                             
                             if not sub.empty:
-                                has_valid_data = True
+                                sub_res = sub.sort_values(time_col).reset_index(drop=True)
                                 bar_c, line_c = color_palette[idx % len(color_palette)]
+                                act_s = sub_res[time_col].min().strftime('%Y-%m-%d %H:%M:%S')
+                                act_e = sub_res[time_col].max().strftime('%Y-%m-%d %H:%M:%S')
+                                
                                 run_s = item['run_sec']
                                 stop_s = item['stop_sec']
                                 label_desc = f"多频集速运行{run_s}s/停止{stop_s}s"
                                 
-                                act_s = sub[time_col].min().strftime('%Y-%m-%d %H:%M:%S')
-                                act_e = sub[time_col].max().strftime('%Y-%m-%d %H:%M:%S')
-                                
-                                x_vals = range(len(sub))
-                                y_load = sub[load_col]
-                                y_press = sub[pressure_col]
+                                sub_res['period_name'] = f"{idx}_{label_desc} (实际 {act_s} ~ {act_e})"
+                                sub_res['bar_color'] = bar_c
+                                sub_res['line_color'] = line_c
+                                processed_dfs.append(sub_res)
 
-                                ax1.fill_between(x_vals, y_load, color=bar_c, alpha=0.5, label=f"{label_desc} (实际 {act_s} ~ {act_e}) 负荷")
-                                ax1.plot(x_vals, y_load, color=bar_c, linewidth=0.8, alpha=0.8)
-                                ax2.plot(x_vals, y_press, color=line_c, linewidth=1.6, marker='o', markersize=2, label=f"{label_desc} (实际 {act_s} ~ {act_e}) 压差")
-
-                        if not has_valid_data:
+                        if not processed_dfs:
                             st.warning("在指定的时间段与阈值条件下未检索到有效数据！")
                         else:
+                            df_final = pd.concat(processed_dfs).reset_index(drop=True)
+                            
+                            x_indices = range(len(df_final))
+                            time_labels = df_final[time_col].dt.strftime('%m-%d %H:%M:%S').tolist()
+
+                            fig, ax1 = plt.subplots(figsize=(14, 8))
+                            ax2 = ax1.twinx()
+
+                            # 核心：分段循环画图，确保每个时段都有独立颜色和独立图例
+                            for name in df_final['period_name'].unique():
+                                mask = df_final['period_name'] == name
+                                subset_x = [x for x, m in zip(x_indices, mask) if m]
+                                bar_c = df_final[mask]['bar_color'].iloc[0]
+                                line_c = df_final[mask]['line_color'].iloc[0]
+                                display_label = name.split('_', 1)[1]
+
+                                y_vals = df_final[mask][load_col]
+                                ax1.fill_between(subset_x, y_vals, color=bar_c, alpha=0.5, label=f"{display_label} 负荷")
+                                ax1.plot(subset_x, y_vals, color=bar_c, linewidth=0.8, alpha=0.8)
+                                ax2.plot(subset_x, df_final[mask][pressure_col], color=line_c, linewidth=1.6, marker='o', markersize=2, label=f"{display_label} 压差")
+
                             ax1.set_xlabel("运行时间段", fontsize=12)
                             ax1.set_ylabel(f"负荷 ({load_col})", color='black', fontsize=12)
                             ax2.set_ylabel(f"压差 ({pressure_col})", color='black', fontsize=12)
 
                             ax2.grid(True, axis='y', color='white', linestyle='-', linewidth=0.8, alpha=0.8)
                             ax2.set_axisbelow(True)
+
+                            step = max(1, len(x_indices) // 10)
+                            ax1.set_xticks(list(x_indices)[::step])
+                            ax1.set_xticklabels([time_labels[i] for i in range(0, len(time_labels), step)], rotation=30)
 
                             if threshold is not None:
                                 t_val = int(threshold) if threshold.is_integer() else threshold
@@ -240,7 +268,7 @@ if uploaded_files:
                             fig.subplots_adjust(bottom=0.28)
                             
                             st.pyplot(fig)
-                            st.success("图表生成成功！")
+                            st.success("图表生成成功！多时段颜色区分与图例已完美呈现！")
 
                     except Exception as err:
                         st.error(f"计算或绘图过程中发生错误: {err}")

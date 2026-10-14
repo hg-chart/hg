@@ -261,8 +261,7 @@ def mutate_intervals(new_list, select=None):
     st.session_state.intervals = new_list
     st.session_state.edit_ver += 1
     st.session_state["_sync_form"] = True
-    if select is not None:
-        st.session_state["_pending_sel"] = select
+    st.session_state["_sel_rows"] = list(select) if isinstance(select, (list, tuple, set)) else []
     st.rerun()
 
 
@@ -440,115 +439,102 @@ with left_form:
                 st.error(f"时间格式错误：{exc}")
 
 # ------------------------------------------------------------
-# 已添加时段：查看 / 调整顺序 / 修改 / 删除
+# 已添加时段：直接在表格中修改 / 勾选后上移、下移、删除
 # ------------------------------------------------------------
 if st.session_state.intervals:
     intervals = st.session_state.intervals
-    count = len(intervals)
+    ver = st.session_state.edit_ver
+    sel_rows = set(st.session_state.get("_sel_rows", []))
 
-    st.write("当前已添加的对比时段（图表按此顺序依次排列）：")
-    st.dataframe(
-        pd.DataFrame([
-            {
-                "序号": i + 1,
-                "开始时间": item["start"],
-                "结束时间": item["end"],
-                "多频集速运行(s)": item.get("run_sec", "0"),
-                "多频集速停止(s)": item.get("stop_sec", "-"),
-            }
-            for i, item in enumerate(intervals)
-        ]),
-        use_container_width=True,
+    st.write("当前已添加的对比时段（图表按此顺序依次排列）。双击单元格可直接修改；勾选“选择”后可上移/下移/删除：")
+    table_df = pd.DataFrame([
+        {
+            "选择": i in sel_rows,
+            "序号": i + 1,
+            "开始时间": item["start"],
+            "结束时间": item["end"],
+            "多频集速运行(s)": str(item.get("run_sec", "0")),
+            "多频集速停止(s)": str(item.get("stop_sec", "-")),
+        }
+        for i, item in enumerate(intervals)
+    ])
+    edited = st.data_editor(
+        table_df,
         hide_index=True,
+        use_container_width=True,
+        num_rows="fixed",
+        disabled=["序号"],
+        column_config={
+            "选择": st.column_config.CheckboxColumn("选择", width="small"),
+            "序号": st.column_config.NumberColumn("序号", width="small"),
+        },
+        key=f"interval_table_{ver}",
     )
 
-    # 应用待定的选中项（必须在 selectbox 创建之前）
-    if "_pending_sel" in st.session_state:
-        st.session_state["sel_idx"] = st.session_state.pop("_pending_sel")
-    if st.session_state.get("sel_idx", 0) >= count:
-        st.session_state["sel_idx"] = count - 1
+    # 解析表格中的修改
+    new_list, errors = [], []
+    for i, row in edited.reset_index(drop=True).iterrows():
+        try:
+            s = parse_interval_time(row["开始时间"])
+            e = parse_interval_time(row["结束时间"])
+            if s >= e:
+                raise ValueError("开始时间必须早于结束时间")
+            run_text, stop_text = normalize_run_stop(row["多频集速运行(s)"], row["多频集速停止(s)"])
+            new_list.append({
+                "start": s.strftime("%Y-%m-%d %H:%M:%S"),
+                "end": e.strftime("%Y-%m-%d %H:%M:%S"),
+                "run_sec": run_text,
+                "stop_sec": stop_text,
+            })
+        except Exception as exc:
+            errors.append(f"第 {i + 1} 行：{exc}")
+            new_list.append(dict(intervals[i]))
+    selected = [i for i, flag in enumerate(edited["选择"].tolist()) if flag]
 
-    with st.expander("✏️ 编辑时段（选择 → 上移/下移 → 修改时间与运行参数 → 删除）", expanded=True):
-        sel = st.selectbox(
-            "选择要操作的时段",
-            options=list(range(count)),
-            format_func=lambda i: (
-                f"时段 {i + 1}：{intervals[i]['start']} ~ {intervals[i]['end']}"
-            ),
-            key="sel_idx",
-        )
-        current = intervals[sel]
-        ver = st.session_state.edit_ver
+    b1, b2, b3, b4 = st.columns(4)
+    pressed = False
+    with b1:
+        up = st.button("⬆️ 上移", use_container_width=True)
+    with b2:
+        down = st.button("⬇️ 下移", use_container_width=True)
+    with b3:
+        delete = st.button("❌ 删除选中", use_container_width=True)
+    with b4:
+        clear_all = st.button("🗑️ 清空所有时段", use_container_width=True)
 
-        # 1. 调整顺序 / 2. 删除
-        b1, b2, b3 = st.columns(3)
-        with b1:
-            if st.button("⬆️ 上移", disabled=(sel == 0), use_container_width=True):
-                new_list = list(intervals)
-                new_list[sel - 1], new_list[sel] = new_list[sel], new_list[sel - 1]
-                mutate_intervals(new_list, select=sel - 1)
-        with b2:
-            if st.button("⬇️ 下移", disabled=(sel == count - 1), use_container_width=True):
-                new_list = list(intervals)
-                new_list[sel + 1], new_list[sel] = new_list[sel], new_list[sel + 1]
-                mutate_intervals(new_list, select=sel + 1)
-        with b3:
-            if st.button("❌ 删除该时段", use_container_width=True):
-                new_list = [item for i, item in enumerate(intervals) if i != sel]
-                mutate_intervals(new_list, select=min(sel, max(len(new_list) - 1, 0)))
+    if errors:
+        st.error("表格中有无效内容，已保留原值：" + "；".join(errors))
 
-        # 3. 修改起止时间 / 4. 修改运行参数
-        st.markdown(f"**修改时段 {sel + 1}**")
-        e1, e2 = st.columns(2)
-        with e1:
-            edit_start = st.text_input(
-                "开始时间（格式 YYYY-MM-DD HH:MM:SS）",
-                value=current["start"],
-                key=f"ed_start_{ver}_{sel}",
-            )
-        with e2:
-            edit_end = st.text_input(
-                "结束时间（格式 YYYY-MM-DD HH:MM:SS）",
-                value=current["end"],
-                key=f"ed_end_{ver}_{sel}",
-            )
-        e3, e4 = st.columns(2)
-        with e3:
-            edit_run = st.text_input(
-                "多频集速运行秒数",
-                value=str(current.get("run_sec", "0")),
-                key=f"ed_run_{ver}_{sel}",
-            )
-        with e4:
-            edit_stop = st.text_input(
-                "多频集速停止秒数（运行为 0 时可不填）",
-                value=str(current.get("stop_sec", "-")),
-                key=f"ed_stop_{ver}_{sel}",
-            )
-
-        if st.button("💾 保存对该时段的修改", type="primary", use_container_width=True):
-            try:
-                new_start = parse_interval_time(edit_start)
-                new_end = parse_interval_time(edit_end)
-                if new_start >= new_end:
-                    st.error("开始时间必须早于结束时间！")
-                else:
-                    run_text, stop_text = normalize_run_stop(edit_run, edit_stop)
-                    new_list = list(intervals)
-                    new_list[sel] = {
-                        "start": new_start.strftime("%Y-%m-%d %H:%M:%S"),
-                        "end": new_end.strftime("%Y-%m-%d %H:%M:%S"),
-                        "run_sec": run_text,
-                        "stop_sec": stop_text,
-                    }
-                    mutate_intervals(new_list, select=sel)
-            except ValueError as exc:
-                st.error(f"输入有误：{exc}")
-            except Exception as exc:
-                st.error(f"时间格式错误：{exc}")
-
-    if st.button("🗑️ 清空所有时段"):
-        mutate_intervals([], select=0)
+    if clear_all:
+        mutate_intervals([])
+    elif up or down or delete:
+        if not selected:
+            st.warning("请先勾选要操作的时段。")
+        elif errors:
+            st.warning("请先修正表格中的错误再操作。")
+        else:
+            chosen = set(selected)
+            order = list(range(len(new_list)))
+            if up:
+                for i in sorted(chosen):
+                    if i > 0 and (i - 1) not in chosen:
+                        order[i - 1], order[i] = order[i], order[i - 1]
+                        chosen.discard(i)
+                        chosen.add(i - 1)
+                # 重新计算勾选位置
+                moved_sel = [pos for pos, orig in enumerate(order) if orig in set(selected)]
+                mutate_intervals([new_list[o] for o in order], select=moved_sel)
+            elif down:
+                for i in sorted(selected, reverse=True):
+                    if i < len(order) - 1 and order[i + 1] not in set(selected):
+                        order[i + 1], order[i] = order[i], order[i + 1]
+                moved_sel = [pos for pos, orig in enumerate(order) if orig in set(selected)]
+                mutate_intervals([new_list[o] for o in order], select=moved_sel)
+            else:
+                mutate_intervals([item for i, item in enumerate(new_list) if i not in chosen])
+    elif not errors and new_list != intervals:
+        # 直接编辑单元格：保存修改，并让“新增时段”的开始时间重新衔接
+        mutate_intervals(new_list, select=selected)
 
 st.markdown("---")
 

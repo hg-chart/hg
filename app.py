@@ -1,17 +1,69 @@
 # -*- coding: utf-8 -*-
-import streamlit as st
-import pandas as pd
-import matplotlib.pyplot as plt
+"""设备运行数据多文件多时段汇总对比分析系统"""
+
 import os
 import json
+import logging
+from pathlib import Path
 from datetime import datetime, timedelta
 
-# 设置网页布局
-st.set_page_config(page_title="设备运行数据多文件多时段汇总对比分析系统", layout="wide")
+import streamlit as st
+import pandas as pd
+import matplotlib
+import matplotlib.pyplot as plt
+from matplotlib import font_manager
 
-# 【稳定安全的中文配置】直接指定系统已通过 packages.txt 安装的文泉驿正黑
-plt.rcParams['font.sans-serif'] = ['WenQuanYi Zen Hei', 'WenQuanYi Micro Hei', 'sans-serif']
-plt.rcParams['axes.unicode_minus'] = False
+
+# ============================================================
+# 1. 页面与中文字体
+# ============================================================
+
+st.set_page_config(
+    page_title="设备运行数据多文件多时段汇总对比分析系统",
+    layout="wide",
+)
+
+matplotlib.rcParams["axes.unicode_minus"] = False
+
+# packages.txt 安装文泉驿字体。这里既检查字体名称，也主动加载常见字体文件。
+FONT_FILES = [
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttf",
+]
+
+for font_path in FONT_FILES:
+    if os.path.isfile(font_path):
+        try:
+            font_manager.fontManager.addfont(font_path)
+        except Exception:
+            pass
+
+PREFERRED_FONTS = [
+    "WenQuanYi Zen Hei",
+    "WenQuanYi Micro Hei",
+    "Noto Sans CJK SC",
+    "Noto Sans SC",
+    "SimHei",
+    "Microsoft YaHei",
+]
+
+available_fonts = {font.name for font in font_manager.fontManager.ttflist}
+selected_font = next(
+    (name for name in PREFERRED_FONTS if name in available_fonts),
+    None,
+)
+
+if selected_font:
+    matplotlib.rcParams["font.family"] = "sans-serif"
+    matplotlib.rcParams["font.sans-serif"] = [selected_font, "DejaVu Sans"]
+    logging.warning("Matplotlib 中文字体：%s", selected_font)
+else:
+    logging.error(
+        "没有检测到中文字体。请检查根目录 packages.txt 是否包含 "
+        "fonts-wqy-zenhei、fonts-wqy-microhei、fontconfig，并查看部署日志。"
+    )
 
 COLUMN_ALIASES = {
     "压差": "W3.FW.AHTE10CP201F",
@@ -21,333 +73,511 @@ COLUMN_ALIASES = {
 st.title("📊 设备运行数据多文件多时段汇总对比分析系统")
 st.markdown("---")
 
-# 创建本地持久化仓库文件夹与时段存档文件
-VAULT_DIR = "uploaded_vault"
-if not os.path.exists(VAULT_DIR):
-    os.makedirs(VAULT_DIR)
 
+# ============================================================
+# 2. 文件库和历史时段方案
+# ============================================================
+
+VAULT_DIR = "uploaded_vault"
+os.makedirs(VAULT_DIR, exist_ok=True)
 TEMPLATES_FILE = os.path.join(VAULT_DIR, "templates_vault.json")
 
-# 加载硬盘中持久化的历史方案
-@st.cache_resource
-def load_persistent_templates():
-    default_templates = {
+
+def default_templates():
+    return {
         "默认测试方案 (5个时段示例)": [
             {"start": "2026-08-01 01:01:00", "end": "2026-08-05 01:01:50", "run_sec": "0", "stop_sec": "-"},
             {"start": "2026-09-19 01:01:50", "end": "2026-09-25 13:09:50", "run_sec": "0", "stop_sec": "-"},
             {"start": "2026-09-25 13:10:50", "end": "2026-09-29 13:09:50", "run_sec": "30", "stop_sec": "780"},
-            {"start": "2026-10-4 13:09:50", "end": "2026-10-12 15:20:50", "run_sec": "30", "stop_sec": "780"},
-            {"start": "2026-10-12 15:20:51", "end": "2026-10-14 15:20:50", "run_sec": "60", "stop_sec": "300"}
+            {"start": "2026-10-04 13:09:50", "end": "2026-10-12 15:20:50", "run_sec": "30", "stop_sec": "780"},
+            {"start": "2026-10-12 15:20:51", "end": "2026-10-14 15:20:50", "run_sec": "60", "stop_sec": "300"},
         ]
     }
+
+
+@st.cache_resource
+def load_persistent_templates():
     if os.path.exists(TEMPLATES_FILE):
         try:
-            with open(TEMPLATES_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+            with open(TEMPLATES_FILE, "r", encoding="utf-8") as file:
+                data = json.load(file)
+            if isinstance(data, dict):
+                return data
         except Exception:
-            return default_templates
-    return default_templates
+            logging.exception("读取历史时段方案失败，将使用默认方案。")
+    return default_templates()
 
-def save_persistent_templates(templates_dict):
+
+def save_persistent_templates(templates):
     try:
-        with open(TEMPLATES_FILE, "w", encoding="utf-8") as f:
-            json.dump(templates_dict, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        st.error(f"保存时段方案到硬盘失败: {e}")
+        with open(TEMPLATES_FILE, "w", encoding="utf-8") as file:
+            json.dump(templates, file, ensure_ascii=False, indent=4)
+        return True
+    except Exception as exc:
+        st.error(f"保存时段方案失败：{exc}")
+        return False
 
-if 'saved_templates' not in st.session_state:
+
+if "saved_templates" not in st.session_state:
     st.session_state.saved_templates = load_persistent_templates()
-
-if 'intervals' not in st.session_state:
+if "intervals" not in st.session_state:
     st.session_state.intervals = []
 
-# --- 1. 文件上传与本地持久化文件库管理 ---
-st.subheader("1. 表格文件管理（支持新上传与本地持久化历史文件调用）")
 
-uploaded_files = st.file_uploader("上传新的工业数据表格文件 (CSV / XLSX)", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
+# ============================================================
+# 3. 上传及选择数据文件
+# ============================================================
+
+st.subheader("1. 表格文件管理（支持上传和调用历史文件）")
+
+uploaded_files = st.file_uploader(
+    "上传工业数据表格文件（CSV / XLSX / XLS）",
+    type=["csv", "xlsx", "xls"],
+    accept_multiple_files=True,
+)
 
 if uploaded_files:
     for uploaded_file in uploaded_files:
-        file_path = os.path.join(VAULT_DIR, uploaded_file.name)
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-    st.success("新文件已成功保存至本地持久化文件库！")
+        safe_name = Path(uploaded_file.name).name
+        target = os.path.join(VAULT_DIR, safe_name)
+        with open(target, "wb") as file:
+            file.write(uploaded_file.getbuffer())
+    st.success("文件已保存到当前运行环境的文件库。")
 
-existing_vault_files = [f for f in os.listdir(VAULT_DIR) if f.lower().endswith(('.csv', '.xlsx', '.xls'))]
+existing_files = sorted(
+    name for name in os.listdir(VAULT_DIR)
+    if name.lower().endswith((".csv", ".xlsx", ".xls"))
+)
 
-active_file_paths = []
-if existing_vault_files:
-    with st.expander("📁 硬盘持久化文件库（刷新网页不会丢失，随时勾选调用）", expanded=True):
-        selected_hist_names = st.multiselect("勾选需要参与本次分析的历史文件", existing_vault_files, default=existing_vault_files)
-        
-        for fname in selected_hist_names:
-            active_file_paths.append(os.path.join(VAULT_DIR, fname))
-        
-        if st.button("🗑️ 清空本地所有历史文件"):
-            for f in existing_vault_files:
+active_paths = []
+if existing_files:
+    with st.expander("📁 文件库（勾选本次分析所需文件）", expanded=True):
+        selected_files = st.multiselect(
+            "选择参与分析的文件",
+            existing_files,
+            default=existing_files,
+        )
+        active_paths = [os.path.join(VAULT_DIR, name) for name in selected_files]
+
+        if st.button("🗑️ 清空文件库中的所有表格文件"):
+            for name in existing_files:
                 try:
-                    os.remove(os.path.join(VAULT_DIR, f))
-                except Exception:
-                    pass
+                    os.remove(os.path.join(VAULT_DIR, name))
+                except OSError as exc:
+                    st.warning(f"删除 {name} 失败：{exc}")
             st.rerun()
 
-if active_file_paths:
-    st.success(f"当前已加载 {len(active_file_paths)} 个文件参与分析。")
+if not active_paths:
+    st.info("请先上传或选择 CSV、Excel 数据文件。")
+    st.stop()
 
-    try:
-        dfs_list = []
-        for f_path in active_file_paths:
-            if f_path.lower().endswith('.csv'):
-                df_temp = None
-                for enc in ['utf-8', 'gbk', 'gb18030', 'latin1']:
-                    try:
-                        df_temp = pd.read_csv(f_path, encoding=enc)
-                        break
-                    except Exception:
-                        continue
-                if df_temp is None:
-                    df_temp = pd.read_csv(f_path, encoding='utf-8', errors='ignore')
-            else:
-                xls = pd.ExcelFile(f_path)
-                sheets = [pd.read_excel(f_path, sheet_name=s) for s in xls.sheet_names]
-                df_temp = pd.concat(sheets, ignore_index=True) if sheets else pd.DataFrame()
-            
-            df_temp.columns = df_temp.columns.astype(str).str.strip().str.lstrip('\ufeff')
-            dfs_list.append(df_temp)
-        
-        df_all_raw = pd.concat(dfs_list, ignore_index=True) if dfs_list else pd.DataFrame()
-        cols = [str(c).strip() for c in df_all_raw.columns if pd.notna(c) and str(c).strip() != ""]
-    except Exception as e:
-        cols = []
-        st.error(f"读取文件失败: {e}")
+st.success(f"当前已选择 {len(active_paths)} 个文件参与分析。")
 
-    if cols:
-        # --- 2. 数据列选择配置 ---
-        st.subheader("2. 数据列选择配置")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            time_col = st.selectbox("横坐标轴 (时间列)", cols, index=0 if len(cols)>0 else 0)
-        with col2:
-            load_col = st.selectbox("负荷左纵轴", cols, index=1 if len(cols)>1 else 0)
-        with col3:
-            pressure_col = st.selectbox("压差右纵轴", cols, index=2 if len(cols)>2 else 0)
 
-        # --- 3. 负荷阈值过滤 ---
-        st.subheader("3. 负荷过滤配置（可选）")
-        threshold_input = st.text_input("负荷下限阈值 (留空则取全部数据)", value="")
-        threshold = float(threshold_input) if threshold_input.strip() else None
+# ============================================================
+# 4. 读取 CSV / Excel
+# ============================================================
 
-        # --- 4. 多时段对比配置 ---
-        st.subheader("4. 多时段对比配置")
-        
-        with st.expander("📁 历史时段方案管理（已实现硬盘持久化，刷新不丢失）", expanded=False):
-            template_names = list(st.session_state.saved_templates.keys())
-            col_t1, col_t2 = st.columns([2, 1])
-            with col_t1:
-                selected_template = st.selectbox("选择已保存的历史方案", template_names)
-                if st.button("📥 一键加载该历史方案"):
-                    st.session_state.intervals = [dict(item) for item in st.session_state.saved_templates[selected_template]]
-                    st.success(f"成功加载历史方案：【{selected_template}】！")
-                    st.rerun()
-            with col_t2:
-                new_template_name = st.text_input("给当前时段起个名字", value="我的常用方案")
-                if st.button("💾 保存当前时段为历史方案"):
-                    if not st.session_state.intervals:
-                        st.warning("当前还没有添加任何时段，无法保存！")
-                    else:
-                        st.session_state.saved_templates[new_template_name] = [dict(item) for item in st.session_state.intervals]
-                        save_persistent_templates(st.session_state.saved_templates)
-                        st.success(f"方案【{new_template_name}】已成功持久化保存到硬盘！")
-                        st.rerun()
+try:
+    dataframes = []
 
-        # 【时间自动衔接逻辑】：精准衔接上一时段结束时间
-        default_dt = datetime.now()
-        if st.session_state.intervals:
-            try:
-                default_dt = pd.to_datetime(st.session_state.intervals[-1]['end'])
-            except Exception:
-                pass
+    for file_path in active_paths:
+        if file_path.lower().endswith(".csv"):
+            df = None
+            read_errors = []
+            for encoding in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
+                try:
+                    df = pd.read_csv(file_path, encoding=encoding)
+                    break
+                except (UnicodeDecodeError, pd.errors.ParserError) as exc:
+                    read_errors.append(f"{encoding}: {exc}")
+            if df is None:
+                raise ValueError(
+                    f"无法读取 CSV 文件 {Path(file_path).name}。"
+                    + "；".join(read_errors)
+                )
         else:
-            try:
-                df_all_raw[time_col] = pd.to_datetime(df_all_raw[time_col].astype(str).str.strip(), format='mixed', errors='coerce')
-                valid_min = df_all_raw[time_col].min()
-                if pd.notna(valid_min):
-                    default_dt = valid_min
-            except Exception:
-                pass
+            with pd.ExcelFile(file_path) as excel:
+                sheet_names = excel.sheet_names
+            sheet_frames = [
+                pd.read_excel(file_path, sheet_name=sheet)
+                for sheet in sheet_names
+            ]
+            df = pd.concat(sheet_frames, ignore_index=True) if sheet_frames else pd.DataFrame()
 
-        default_end_dt = default_dt + timedelta(minutes=50)
+        df.columns = df.columns.astype(str).str.strip().str.lstrip("\ufeff")
+        dataframes.append(df)
 
-        # 布局：表单严格控制在左侧半屏范围内，减少鼠标移动
-        form_wrapper, _ = st.columns([1, 1])
+    df_raw = pd.concat(dataframes, ignore_index=True, sort=False)
+    columns = [str(c).strip() for c in df_raw.columns if str(c).strip()]
 
-        with form_wrapper:
-            with st.form("interval_form"):
-                st.markdown("🕒 **开始时间 (已自动衔接上一时段结束时间)**")
-                sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
-                with sc1: s_y = st.text_input("年", value=str(default_dt.year), key="sy")
-                with sc2: s_m = st.text_input("月", value=f"{default_dt.month:02d}", key="sm")
-                with sc3: s_d = st.text_input("日", value=f"{default_dt.day:02d}", key="sd")
-                with sc4: s_h = st.text_input("时", value=f"{default_dt.hour:02d}", key="sh")
-                with sc5: s_min = st.text_input("分", value=f"{default_dt.minute:02d}", key="smin")
-                with sc6: s_sec = st.text_input("秒", value=f"{default_dt.second:02d}", key="ss")
+except Exception as exc:
+    st.error(f"读取文件失败：{exc}")
+    st.stop()
 
-                st.markdown("🕒 **结束时间**")
-                ec1, ec2, ec3, ec4, ec5, ec6 = st.columns(6)
-                with ec1: e_y = st.text_input("年 ", value=str(default_end_dt.year), key="ey")
-                with ec2: e_m = st.text_input("月 ", value=f"{default_end_dt.month:02d}", key="em")
-                with ec3: e_d = st.text_input("日 ", value=f"{default_end_dt.day:02d}", key="ed")
-                with ec4: e_h = st.text_input("时 ", value=f"{default_end_dt.hour:02d}", key="eh")
-                with ec5: e_min = st.text_input("分 ", value=f"{default_end_dt.minute:02d}", key="emin")
-                with ec6: e_sec = st.text_input("秒 ", value=f"{default_end_dt.second:02d}", key="es")
+if not columns:
+    st.error("所选文件没有可用的数据列。")
+    st.stop()
 
-                rc1, rc2 = st.columns(2)
-                with rc1:
-                    run_sec = st.text_input("运行秒数", "30")
-                with rc2:
-                    stop_sec = st.text_input("停止秒数 (若运行为0可不填)", "780")
-                
-                submitted = st.form_submit_button("➕ 添加时段到对比列表", use_container_width=True)
 
-                if submitted:
-                    try:
-                        start_str = f"{s_y.strip()}-{s_m.strip().zfill(2)}-{s_d.strip().zfill(2)} {s_h.strip().zfill(2)}:{s_min.strip().zfill(2)}:{s_sec.strip().zfill(2)}"
-                        end_str = f"{e_y.strip()}-{e_m.strip().zfill(2)}-{e_d.strip().zfill(2)} {e_h.strip().zfill(2)}:{e_min.strip().zfill(2)}:{e_sec.strip().zfill(2)}"
-                        
-                        dt_s = pd.to_datetime(start_str)
-                        dt_e = pd.to_datetime(end_str)
-                        
-                        if dt_s >= dt_e:
-                            st.error("开始时间必须早于结束时间！")
-                        else:
-                            st.session_state.intervals.append({
-                                "start": start_str,
-                                "end": end_str,
-                                "run_sec": run_sec,
-                                "stop_sec": stop_sec if (run_sec != "0" and run_sec != "0.0") else "-"
-                            })
-                            st.success("添加成功！")
-                            st.rerun()
-                    except Exception as err:
-                        st.error(f"时间格式错误: {err}")
+# ============================================================
+# 5. 数据列和负荷过滤
+# ============================================================
 
-        # 显示已添加的时段列表
-        if st.session_state.intervals:
-            st.write("当前已添加的对比时段：")
-            df_intervals = pd.DataFrame(st.session_state.intervals)
-            st.dataframe(df_intervals, use_container_width=True)
-            
-            if st.button("🗑️ 清空所有时段"):
-                st.session_state.intervals = []
+st.subheader("2. 数据列选择配置")
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    time_col = st.selectbox("横坐标轴（时间列）", columns, index=0)
+with col2:
+    load_col = st.selectbox("负荷左纵轴", columns, index=min(1, len(columns) - 1))
+with col3:
+    pressure_col = st.selectbox("压差右纵轴", columns, index=min(2, len(columns) - 1))
+
+st.subheader("3. 负荷过滤配置（可选）")
+threshold_text = st.text_input("负荷下限阈值（留空则使用全部负荷数据）", value="")
+threshold = None
+threshold_valid = True
+
+if threshold_text.strip():
+    try:
+        threshold = float(threshold_text.strip())
+    except ValueError:
+        threshold_valid = False
+        st.error("负荷下限必须是数字，例如 240。")
+
+
+# ============================================================
+# 6. 多时段配置与历史方案
+# ============================================================
+
+st.subheader("4. 多时段对比配置")
+
+with st.expander("📁 历史时段方案管理", expanded=False):
+    template_names = list(st.session_state.saved_templates.keys())
+    tcol1, tcol2 = st.columns([2, 1])
+
+    with tcol1:
+        if template_names:
+            chosen_template = st.selectbox("选择已保存的历史方案", template_names)
+            if st.button("📥 一键加载该历史方案"):
+                st.session_state.intervals = [
+                    dict(item) for item in st.session_state.saved_templates[chosen_template]
+                ]
+                st.success(f"已加载历史方案：{chosen_template}")
                 st.rerun()
+        else:
+            st.info("尚无保存的历史方案。")
 
-        st.markdown("---")
-
-        # --- 5. 生成图表按钮 ---
-        if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
+    with tcol2:
+        template_name = st.text_input("当前方案名称", value="我的常用方案")
+        if st.button("💾 保存当前时段方案"):
             if not st.session_state.intervals:
-                st.warning("请至少添加一个对比时间段！")
+                st.warning("当前没有时段，无法保存。")
+            elif not template_name.strip():
+                st.warning("请填写方案名称。")
             else:
-                with st.spinner("正在高速处理多时段数据并绘图..."):
-                    try:
-                        df_all = df_all_raw.copy()
-                        df_all = df_all.rename(columns=COLUMN_ALIASES)
-                        
-                        df_all[time_col] = pd.to_datetime(df_all[time_col].astype(str).str.strip(), format='mixed', errors='coerce')
-                        df_all = df_all.dropna(subset=[time_col]).sort_values(time_col)
-                        df_all = df_all[df_all[load_col] != 0].reset_index(drop=True)
+                st.session_state.saved_templates[template_name.strip()] = [
+                    dict(item) for item in st.session_state.intervals
+                ]
+                if save_persistent_templates(st.session_state.saved_templates):
+                    st.success(f"方案“{template_name.strip()}”已保存。")
+                    st.rerun()
 
-                        if threshold is not None:
-                            df_all = df_all[df_all[load_col] >= threshold].reset_index(drop=True)
-
-                        color_palette = [
-                            ("#85B2FF", "#1E3F66"),
-                            ("#52C41A", "#135200"),
-                            ("#FF7875", "#820014"),
-                            ("#B37FEB", "#391085"),
-                            ("#FF9C6E", "#873800"),
-                            ("#36CBCB", "#00474F"),
-                            ("#FF85C0", "#990033"),
-                            ("#D3F261", "#5B8C00")
-                        ]
-
-                        processed_dfs = []
-                        debug_info = []
-
-                        for idx, item in enumerate(st.session_state.intervals):
-                            s_dt = pd.to_datetime(item['start'])
-                            e_dt = pd.to_datetime(item['end'])
-                            sub = df_all[(df_all[time_col] >= s_dt) & (df_all[time_col] <= e_dt)].copy()
-                            
-                            debug_info.append(f"时段 {idx+1}: 匹配到 {len(sub)} 行")
-
-                            if not sub.empty:
-                                sub_res = sub.sort_values(time_col).reset_index(drop=True)
-                                bar_c, line_c = color_palette[idx % len(color_palette)]
-                                act_s = sub_res[time_col].min().strftime('%Y-%m-%d %H:%M:%S')
-                                act_e = sub_res[time_col].max().strftime('%Y-%m-%d %H:%M:%S')
-                                
-                                run_s = item['run_sec']
-                                stop_s = item['stop_sec']
-                                label_desc = f"多频集速运行{run_s}s/停止{stop_s}s"
-                                
-                                sub_res['period_name'] = f"{idx}_{label_desc} (实际 {act_s} ~ {act_e})"
-                                sub_res['bar_color'] = bar_c
-                                sub_res['line_color'] = line_c
-                                processed_dfs.append(sub_res)
-
-                        st.info("🔍 各时段数据检索诊断：" + " | ".join(debug_info))
-
-                        if not processed_dfs:
-                            st.warning("在指定的所有时间段与阈值条件下均未检索到有效数据！")
-                        else:
-                            df_final = pd.concat(processed_dfs).reset_index(drop=True)
-                            
-                            x_indices = range(len(df_final))
-                            time_labels = df_final[time_col].dt.strftime('%m-%d %H:%M:%S').tolist()
-
-                            fig, ax1 = plt.subplots(figsize=(14, 8))
-                            ax2 = ax1.twinx()
-
-                            for name in df_final['period_name'].unique():
-                                mask = df_final['period_name'] == name
-                                subset_x = [x for x, m in zip(x_indices, mask) if m]
-                                bar_c = df_final[mask]['bar_color'].iloc[0]
-                                line_c = df_final[mask]['line_color'].iloc[0]
-                                display_label = name.split('_', 1)[1]
-
-                                y_vals = df_final[mask][load_col]
-                                ax1.fill_between(subset_x, y_vals, color=bar_c, alpha=0.5, label=f"{display_label} 负荷")
-                                ax1.plot(subset_x, y_vals, color=bar_c, linewidth=0.8, alpha=0.8)
-                                ax2.plot(subset_x, df_final[mask][pressure_col], color=line_c, linewidth=1.6, marker='o', markersize=2, label=f"{display_label} 压差")
-
-                            ax1.set_xlabel("运行时间段", fontsize=12)
-                            ax1.set_ylabel(f"负荷 ({load_col})", color='black', fontsize=12)
-                            ax2.set_ylabel(f"压差 ({pressure_col})", color='black', fontsize=12)
-
-                            ax2.grid(True, axis='y', color='white', linestyle='-', linewidth=0.8, alpha=0.8)
-                            ax2.set_axisbelow(True)
-
-                            step = max(1, len(x_indices) // 10)
-                            ax1.set_xticks(list(x_indices)[::step])
-                            ax1.set_xticklabels([time_labels[i] for i in range(0, len(time_labels), step)], rotation=30)
-
-                            if threshold is not None:
-                                t_val = int(threshold) if threshold.is_integer() else threshold
-                                plt.title(f"机组负荷/压差对比趋势图（最低负荷 ≥ {t_val}）", fontsize=14, pad=15)
-                            else:
-                                plt.title("机组负荷/压差对比趋势图", fontsize=14, pad=15)
-
-                            lines_1, labels_1 = ax1.get_legend_handles_labels()
-                            lines_2, labels_2 = ax2.get_legend_handles_labels()
-                            ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper center', bbox_to_anchor=(0.5, -0.18), fontsize=9, ncol=2, framealpha=0.9)
-
-                            fig.subplots_adjust(bottom=0.28)
-                            
-                            st.pyplot(fig)
-                            st.success("图表生成成功！")
-
-                    except Exception as err:
-                        st.error(f"计算或绘图过程中发生错误: {err}")
+default_start = datetime.now()
+if st.session_state.intervals:
+    try:
+        default_start = pd.to_datetime(st.session_state.intervals[-1]["end"]).to_pydatetime()
+    except Exception:
+        pass
 else:
-    st.info("请先在上方的文件上传框中选择并上传您的工业 CSV 或 Excel 文件。")
+    try:
+        parsed = pd.to_datetime(
+            df_raw[time_col].astype(str).str.strip(),
+            format="mixed",
+            errors="coerce",
+        )
+        earliest = parsed.min()
+        if pd.notna(earliest):
+            default_start = earliest.to_pydatetime()
+    except Exception:
+        pass
+
+default_end = default_start + timedelta(minutes=50)
+left_form, _ = st.columns([1, 1])
+
+with left_form:
+    with st.form("interval_form"):
+        st.markdown("🕒 **开始时间（自动衔接上一时段结束时间）**")
+        sy1, sy2, sy3, sy4, sy5, sy6 = st.columns(6)
+        with sy1:
+            start_year = st.text_input("年", value=str(default_start.year), key="sy")
+        with sy2:
+            start_month = st.text_input("月", value=f"{default_start.month:02d}", key="sm")
+        with sy3:
+            start_day = st.text_input("日", value=f"{default_start.day:02d}", key="sd")
+        with sy4:
+            start_hour = st.text_input("时", value=f"{default_start.hour:02d}", key="sh")
+        with sy5:
+            start_minute = st.text_input("分", value=f"{default_start.minute:02d}", key="smin")
+        with sy6:
+            start_second = st.text_input("秒", value=f"{default_start.second:02d}", key="ss")
+
+        st.markdown("🕒 **结束时间**")
+        ey1, ey2, ey3, ey4, ey5, ey6 = st.columns(6)
+        with ey1:
+            end_year = st.text_input("年 ", value=str(default_end.year), key="ey")
+        with ey2:
+            end_month = st.text_input("月 ", value=f"{default_end.month:02d}", key="em")
+        with ey3:
+            end_day = st.text_input("日 ", value=f"{default_end.day:02d}", key="ed")
+        with ey4:
+            end_hour = st.text_input("时 ", value=f"{default_end.hour:02d}", key="eh")
+        with ey5:
+            end_minute = st.text_input("分 ", value=f"{default_end.minute:02d}", key="emin")
+        with ey6:
+            end_second = st.text_input("秒 ", value=f"{default_end.second:02d}", key="es")
+
+        run_col, stop_col = st.columns(2)
+        with run_col:
+            run_seconds = st.text_input("运行秒数", value="30")
+        with stop_col:
+            stop_seconds = st.text_input("停止秒数（运行为 0 时可不填）", value="780")
+
+        add_interval = st.form_submit_button("➕ 添加时段到对比列表", use_container_width=True)
+
+        if add_interval:
+            try:
+                start_string = (
+                    f"{start_year.strip()}-{start_month.strip().zfill(2)}-{start_day.strip().zfill(2)} "
+                    f"{start_hour.strip().zfill(2)}:{start_minute.strip().zfill(2)}:{start_second.strip().zfill(2)}"
+                )
+                end_string = (
+                    f"{end_year.strip()}-{end_month.strip().zfill(2)}-{end_day.strip().zfill(2)} "
+                    f"{end_hour.strip().zfill(2)}:{end_minute.strip().zfill(2)}:{end_second.strip().zfill(2)}"
+                )
+                start_dt = pd.to_datetime(start_string)
+                end_dt = pd.to_datetime(end_string)
+
+                if start_dt >= end_dt:
+                    st.error("开始时间必须早于结束时间！")
+                else:
+                    run_text = run_seconds.strip() or "0"
+                    stop_text = "-" if run_text in ("0", "0.0") else (stop_seconds.strip() or "-")
+                    st.session_state.intervals.append({
+                        "start": start_string,
+                        "end": end_string,
+                        "run_sec": run_text,
+                        "stop_sec": stop_text,
+                    })
+                    st.success("时段添加成功！")
+                    st.rerun()
+            except Exception as exc:
+                st.error(f"时间格式错误：{exc}")
+
+if st.session_state.intervals:
+    st.write("当前已添加的对比时段：")
+    st.dataframe(pd.DataFrame(st.session_state.intervals), use_container_width=True)
+    if st.button("🗑️ 清空所有时段"):
+        st.session_state.intervals = []
+        st.rerun()
+
+st.markdown("---")
+
+
+# ============================================================
+# 7. 生成多时段趋势图
+# ============================================================
+
+if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
+    if not threshold_valid:
+        st.error("请先把负荷下限阈值修改为有效数字。")
+    elif not st.session_state.intervals:
+        st.warning("请至少添加一个对比时间段！")
+    else:
+        with st.spinner("正在处理多时段数据并绘图……"):
+            fig = None
+            try:
+                df = df_raw.copy()
+
+                # 统一“负荷/压差”别名，同时同步更新实际使用的列名，避免 KeyError
+                rename_map = {
+                    col: COLUMN_ALIASES[col]
+                    for col in df.columns
+                    if col in COLUMN_ALIASES
+                }
+                df = df.rename(columns=COLUMN_ALIASES)
+                actual_time_col = rename_map.get(time_col, time_col)
+                actual_load_col = rename_map.get(load_col, load_col)
+                actual_pressure_col = rename_map.get(pressure_col, pressure_col)
+
+                required = [actual_time_col, actual_load_col, actual_pressure_col]
+                missing = [col for col in required if col not in df.columns]
+                if missing:
+                    raise KeyError("找不到所选数据列：" + "、".join(missing))
+
+                df[actual_time_col] = pd.to_datetime(
+                    df[actual_time_col].astype(str).str.strip(),
+                    format="mixed",
+                    errors="coerce",
+                )
+                df[actual_load_col] = pd.to_numeric(df[actual_load_col], errors="coerce")
+                df[actual_pressure_col] = pd.to_numeric(df[actual_pressure_col], errors="coerce")
+                df = df.dropna(subset=[actual_time_col, actual_load_col])
+                df = df.sort_values(actual_time_col).reset_index(drop=True)
+                df = df[df[actual_load_col] != 0].copy()
+
+                if threshold is not None:
+                    df = df[df[actual_load_col] >= threshold].copy()
+
+                palette = [
+                    ("#85B2FF", "#1E3F66"),
+                    ("#52C41A", "#135200"),
+                    ("#FF7875", "#820014"),
+                    ("#B37FEB", "#391085"),
+                    ("#FF9C6E", "#873800"),
+                    ("#36CBCB", "#00474F"),
+                    ("#FF85C0", "#990033"),
+                    ("#D3F261", "#5B8C00"),
+                ]
+
+                plotted_periods = []
+                diagnostics = []
+
+                for index, interval in enumerate(st.session_state.intervals):
+                    start_dt = pd.to_datetime(interval["start"])
+                    end_dt = pd.to_datetime(interval["end"])
+                    part = df[
+                        (df[actual_time_col] >= start_dt)
+                        & (df[actual_time_col] <= end_dt)
+                    ].copy()
+                    diagnostics.append(f"时段 {index + 1}：匹配到 {len(part)} 行")
+
+                    if part.empty:
+                        continue
+
+                    part = part.sort_values(actual_time_col).reset_index(drop=True)
+                    fill_color, line_color = palette[index % len(palette)]
+                    actual_start = part[actual_time_col].min().strftime("%Y-%m-%d %H:%M:%S")
+                    actual_end = part[actual_time_col].max().strftime("%Y-%m-%d %H:%M:%S")
+                    run_value = interval.get("run_sec", "0")
+                    stop_value = interval.get("stop_sec", "-")
+                    description = (
+                        f"多频集速运行{run_value}s/停止{stop_value}s "
+                        f"(实际 {actual_start} ~ {actual_end})"
+                    )
+                    plotted_periods.append({
+                        "data": part,
+                        "fill_color": fill_color,
+                        "line_color": line_color,
+                        "description": description,
+                    })
+
+                st.info("🔍 各时段数据检索诊断：" + " | ".join(diagnostics))
+
+                if not plotted_periods:
+                    st.warning("指定时间段和负荷阈值下均未检索到有效数据。")
+                else:
+                    fig, ax1 = plt.subplots(figsize=(16, 8))
+                    ax2 = ax1.twinx()
+
+                    all_x_labels = []
+                    cursor = 0
+
+                    for period in plotted_periods:
+                        part = period["data"]
+                        count = len(part)
+                        x_values = list(range(cursor, cursor + count))
+                        cursor += count
+                        all_x_labels.extend(
+                            part[actual_time_col].dt.strftime("%m-%d %H:%M:%S").tolist()
+                        )
+
+                        # 负荷：填充面积 + 细线；压差：另一纵轴曲线
+                        ax1.fill_between(
+                            x_values,
+                            part[actual_load_col].to_numpy(),
+                            color=period["fill_color"],
+                            alpha=0.50,
+                            label=f"{period['description']} 负荷",
+                        )
+                        ax1.plot(
+                            x_values,
+                            part[actual_load_col].to_numpy(),
+                            color=period["fill_color"],
+                            linewidth=0.8,
+                            alpha=0.9,
+                        )
+                        ax2.plot(
+                            x_values,
+                            part[actual_pressure_col].to_numpy(),
+                            color=period["line_color"],
+                            linewidth=1.5,
+                            label=f"{period['description']} 压差",
+                        )
+
+                    ax1.set_xlabel("运行时间段", fontsize=12)
+                    ax1.set_ylabel(f"负荷（{actual_load_col}）", fontsize=12, color="black")
+                    ax2.set_ylabel(f"压差（{actual_pressure_col}）", fontsize=12, color="black")
+
+                    ax1.grid(True, axis="y", linestyle="-", linewidth=0.6, alpha=0.35)
+                    ax1.set_axisbelow(True)
+
+                    total_points = len(all_x_labels)
+                    tick_step = max(1, total_points // 10)
+                    tick_positions = list(range(0, total_points, tick_step))
+                    ax1.set_xticks(tick_positions)
+                    ax1.set_xticklabels(
+                        [all_x_labels[i] for i in tick_positions],
+                        rotation=30,
+                        ha="right",
+                    )
+
+                    if threshold is not None:
+                        threshold_display = (
+                            str(int(threshold)) if threshold.is_integer() else str(threshold)
+                        )
+                        title = f"机组负荷/压差对比趋势图（最低负荷 ≥ {threshold_display}）"
+                    else:
+                        title = "机组负荷/压差对比趋势图"
+
+                    ax1.set_title(title, fontsize=15, pad=16)
+
+                    handles1, labels1 = ax1.get_legend_handles_labels()
+                    handles2, labels2 = ax2.get_legend_handles_labels()
+                    ax1.legend(
+                        handles1 + handles2,
+                        labels1 + labels2,
+                        loc="upper center",
+                        bbox_to_anchor=(0.5, -0.23),
+                        fontsize=8,
+                        ncol=2,
+                        framealpha=0.9,
+                    )
+
+                    fig.subplots_adjust(bottom=0.32, top=0.90, left=0.09, right=0.91)
+                    st.pyplot(fig, use_container_width=True)
+                    st.success("图表生成成功！")
+
+                    # 提供 PNG 下载，方便保存或转发
+                    import io
+                    image_buffer = io.BytesIO()
+                    fig.savefig(
+                        image_buffer,
+                        format="png",
+                        dpi=180,
+                        bbox_inches="tight",
+                        facecolor="white",
+                    )
+                    st.download_button(
+                        "⬇️ 下载趋势图 PNG",
+                        data=image_buffer.getvalue(),
+                        file_name="设备运行数据多时段对比趋势图.png",
+                        mime="image/png",
+                    )
+
+            except Exception as exc:
+                st.error(f"计算或绘图过程中发生错误：{exc}")
+            finally:
+                if fig is not None:
+                    plt.close(fig)

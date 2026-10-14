@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import os
 import json
 from datetime import datetime, timedelta
@@ -9,8 +10,13 @@ from datetime import datetime, timedelta
 # 设置网页布局
 st.set_page_config(page_title="设备运行数据多文件多时段汇总对比分析系统", layout="wide")
 
-# 【系统级字体绑定】文泉驿正黑
-plt.rcParams['font.sans-serif'] = ['WenQuanYi Zen Hei', 'WenQuanYi Micro Hei', 'sans-serif']
+# 【彻底解决中文方块】直接显式注册并绑定文泉驿正黑字体
+font_path = "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
+if os.path.exists(font_path):
+    fm.fontManager.add_font(font_path)
+    plt.rcParams['font.family'] = 'WenQuanYi Zen Hei'
+else:
+    plt.rcParams['font.sans-serif'] = ['WenQuanYi Micro Hei', 'Droid Sans Fallback', 'sans-serif']
 plt.rcParams['axes.unicode_minus'] = False
 
 COLUMN_ALIASES = {
@@ -137,7 +143,7 @@ if active_file_paths:
         threshold_input = st.text_input("负荷下限阈值 (留空则取全部数据)", value="")
         threshold = float(threshold_input) if threshold_input.strip() else None
 
-        # --- 4. 多时段对比配置（核心：严格限制在半屏宽度内） ---
+        # --- 4. 多时段对比配置 ---
         st.subheader("4. 多时段对比配置")
         
         with st.expander("📁 历史时段方案管理（已实现硬盘持久化，刷新不丢失）", expanded=False):
@@ -160,7 +166,7 @@ if active_file_paths:
                         st.success(f"方案【{new_template_name}】已成功持久化保存到硬盘！")
                         st.rerun()
 
-        # 自动时间衔接逻辑
+        # 【精准恢复自动时间衔接】：获取上一个时段的结束时间作为新时段的开始时间
         default_dt = datetime.now()
         if st.session_state.intervals:
             try:
@@ -178,12 +184,12 @@ if active_file_paths:
 
         default_end_dt = default_dt + timedelta(minutes=50)
 
-        # 关键修改：用 st.columns([1, 1]) 切分，将整个输入表单包裹在左侧【一半宽度】的容器内，拒绝满屏拉伸
-        form_col_left, form_col_right = st.columns([1, 1])
+        # 核心改动：用 st.columns([1, 1]) 把录入表单严格限制在左侧半屏范围内，右侧留白
+        form_wrapper, _ = st.columns([1, 1])
 
-        with form_col_left:
+        with form_wrapper:
             with st.form("interval_form"):
-                st.markdown("🕒 **开始时间 (自动衔接)**")
+                st.markdown("🕒 **开始时间 (已自动衔接上一时段结束时间)**")
                 sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
                 with sc1: s_y = st.text_input("年", value=str(default_dt.year), key="sy")
                 with sc2: s_m = st.text_input("月", value=f"{default_dt.month:02d}", key="sm")

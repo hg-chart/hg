@@ -424,7 +424,7 @@ else:
 default_end = default_start + timedelta(minutes=50)
 
 # ============================================================
-# 2. 放在下方的“添加新时段”表单（针对手机端优化：日期、时、分、秒完美在同一行显示）
+# 2. 放在下方的“添加新时段”表单（针对手机端优化：日期、时、分、秒完美同排显示）
 # ============================================================
 with st.container(border=True):
     st.markdown("➕ **添加新时段**（自动智能衔接，支持秒级精准配置）")
@@ -432,24 +432,24 @@ with st.container(border=True):
         st.markdown("📅 **开始时间**")
         sc1, sc2, sc3, sc4 = st.columns([2.8, 1, 1, 1])
         with sc1:
-            start_date = st.date_input("开始日期", value=default_start.date(), key="s_date", label_visibility="collapsed")
+            start_date = st.date_input("日期", value=default_start.date(), key="s_date", label_visibility="collapsed")
         with sc2:
-            start_hour = st.number_input("开始时", min_value=0, max_value=23, value=default_start.hour, key="s_h", label_visibility="collapsed")
+            start_hour = st.number_input("时", min_value=0, max_value=23, value=default_start.hour, key="s_h")
         with sc3:
-            start_minute = st.number_input("开始分", min_value=0, max_value=59, value=default_start.minute, key="s_m", label_visibility="collapsed")
+            start_minute = st.number_input("分", min_value=0, max_value=59, value=default_start.minute, key="s_m")
         with sc4:
-            start_second = st.number_input("开始秒", min_value=0, max_value=59, value=default_start.second, key="s_s", label_visibility="collapsed")
+            start_second = st.number_input("秒", min_value=0, max_value=59, value=default_start.second, key="s_s")
 
         st.markdown("📅 **结束时间**")
         ec1, ec2, ec3, ec4 = st.columns([2.8, 1, 1, 1])
         with ec1:
-            end_date = st.date_input("结束日期", value=default_end.date(), key="e_date", label_visibility="collapsed")
+            end_date = st.date_input("日期", value=default_end.date(), key="e_date", label_visibility="collapsed")
         with ec2:
-            end_hour = st.number_input("结束时", min_value=0, max_value=23, value=default_end.hour, key="e_h", label_visibility="collapsed")
+            end_hour = st.number_input("时 ", min_value=0, max_value=23, value=default_end.hour, key="e_h")
         with ec3:
-            end_minute = st.number_input("结束分", min_value=0, max_value=59, value=default_end.minute, key="e_m", label_visibility="collapsed")
+            end_minute = st.number_input("分 ", min_value=0, max_value=59, value=default_end.minute, key="e_m")
         with ec4:
-            end_second = st.number_input("结束秒", min_value=0, max_value=59, value=default_end.second, key="e_s", label_visibility="collapsed")
+            end_second = st.number_input("秒 ", min_value=0, max_value=59, value=default_end.second, key="e_s")
 
         run_col, stop_col, btn_col = st.columns([2, 2, 1.5])
         with run_col:

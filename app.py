@@ -284,44 +284,71 @@ with st.expander("📁 历史时段方案管理", expanded=False):
                     st.success(f"方案“{template_name.strip()}”已保存。")
                     st.rerun()
 
-# 已有时段列表展示区（带有明确表头，方便识别）
+# 已有时段列表展示区（采用类似图二的年月日时分秒独立分栏输入）
 if st.session_state.intervals:
     st.markdown("📋 **当前已添加的对比时段列表：**")
-    
-    # 添加明确定向的表头
-    h_cols = st.columns([0.5, 2.3, 2.3, 0.9, 0.9, 0.8, 0.8, 0.8, 0.8])
-    with h_cols[0]: st.markdown("**序号**")
-    with h_cols[1]: st.markdown("**开始时间**")
-    with h_cols[2]: st.markdown("**结束时间**")
-    with h_cols[3]: st.markdown("**运行秒数**")
-    with h_cols[4]: st.markdown("**停止秒数**")
-    with h_cols[5]: st.markdown("**操作**")
-    with h_cols[6]: st.markdown("")
-    with h_cols[7]: st.markdown("")
-    with h_cols[8]: st.markdown("")
 
     for idx, interval in enumerate(st.session_state.intervals):
         with st.container(border=True):
-            cols = st.columns([0.5, 2.3, 2.3, 0.9, 0.9, 0.8, 0.8, 0.8, 0.8])
-            with cols[0]:
-                st.markdown(f"**#{idx + 1}**")
-            with cols[1]:
-                new_start = st.text_input(f"开始_{idx}", value=interval["start"], label_visibility="collapsed")
-            with cols[2]:
-                new_end = st.text_input(f"结束_{idx}", value=interval["end"], label_visibility="collapsed")
-            with cols[3]:
-                new_run = st.text_input(f"运_{idx}", value=str(interval.get("run_sec", "0")), label_visibility="collapsed")
-            with cols[4]:
-                new_stop = st.text_input(f"停_{idx}", value=str(interval.get("stop_sec", "-")), label_visibility="collapsed")
+            st.markdown(f"**#{idx + 1}**")
             
-            with cols[5]:
+            # 解析原有的时间字符串以填充默认值
+            try:
+                s_dt = pd.to_datetime(interval["start"])
+            except Exception:
+                s_dt = datetime.now()
+            try:
+                e_dt = pd.to_datetime(interval["end"])
+            except Exception:
+                e_dt = datetime.now() + timedelta(minutes=50)
+
+            st.markdown("🕒 **开始时间**")
+            sy1, sy2, sy3, sy4, sy5, sy6 = st.columns(6)
+            with sy1:
+                s_y = st.text_input("年", value=str(s_dt.year), key=f"s_y_{idx}")
+            with sy2:
+                s_m = st.text_input("月", value=f"{s_dt.month:02d}", key=f"s_m_{idx}")
+            with sy3:
+                s_d = st.text_input("日", value=f"{s_dt.day:02d}", key=f"s_d_{idx}")
+            with sy4:
+                s_h = st.text_input("时", value=f"{s_dt.hour:02d}", key=f"s_h_{idx}")
+            with sy5:
+                s_min = st.text_input("分", value=f"{s_dt.minute:02d}", key=f"s_min_{idx}")
+            with sy6:
+                s_s = st.text_input("秒", value=f"{s_dt.second:02d}", key=f"s_s_{idx}")
+
+            st.markdown("🕒 **结束时间**")
+            ey1, ey2, ey3, ey4, ey5, ey6 = st.columns(6)
+            with ey1:
+                e_y = st.text_input("年 ", value=str(e_dt.year), key=f"e_y_{idx}")
+            with ey2:
+                e_m = st.text_input("月 ", value=f"{e_dt.month:02d}", key=f"e_m_{idx}")
+            with ey3:
+                e_d = st.text_input("日 ", value=f"{e_dt.day:02d}", key=f"e_d_{idx}")
+            with ey4:
+                e_h = st.text_input("时 ", value=f"{e_dt.hour:02d}", key=f"e_h_{idx}")
+            with ey5:
+                e_min = st.text_input("分 ", value=f"{e_dt.minute:02d}", key=f"e_min_{idx}")
+            with ey6:
+                e_s = st.text_input("秒 ", value=f"{e_dt.second:02d}", key=f"e_s_{idx}")
+
+            r_col, st_col, b_col1, b_col2, b_col3, b_col4 = st.columns([1.5, 1.5, 1, 1, 1, 1])
+            with r_col:
+                new_run = st.text_input("运行秒数", value=str(interval.get("run_sec", "0")), key=f"run_{idx}")
+            with st_col:
+                new_stop = st.text_input("停止秒数", value=str(interval.get("stop_sec", "-")), key=f"stop_{idx}")
+
+            with b_col1:
+                st.markdown("<br>", unsafe_allow_html=True)
                 if st.button("💾修改", key=f"update_{idx}", use_container_width=True):
                     try:
+                        new_start = f"{s_y.strip()}-{s_m.strip().zfill(2)}-{s_d.strip().zfill(2)} {s_h.strip().zfill(2)}:{s_min.strip().zfill(2)}:{s_s.strip().zfill(2)}"
+                        new_end = f"{e_y.strip()}-{e_m.strip().zfill(2)}-{e_d.strip().zfill(2)} {e_h.strip().zfill(2)}:{e_min.strip().zfill(2)}:{e_s.strip().zfill(2)}"
                         pd.to_datetime(new_start)
                         pd.to_datetime(new_end)
                         st.session_state.intervals[idx] = {
-                            "start": new_start.strip(),
-                            "end": new_end.strip(),
+                            "start": new_start,
+                            "end": new_end,
                             "run_sec": new_run.strip() or "0",
                             "stop_sec": new_stop.strip() or "-",
                         }
@@ -329,8 +356,9 @@ if st.session_state.intervals:
                         st.rerun()
                     except Exception as e:
                         st.error(f"格式错误: {e}")
-            
-            with cols[6]:
+
+            with b_col2:
+                st.markdown("<br>", unsafe_allow_html=True)
                 up_disabled = (idx == 0)
                 if st.button("⬆️上移", key=f"up_{idx}", disabled=up_disabled, use_container_width=True):
                     st.session_state.intervals[idx], st.session_state.intervals[idx - 1] = (
@@ -338,8 +366,9 @@ if st.session_state.intervals:
                         st.session_state.intervals[idx],
                     )
                     st.rerun()
-                    
-            with cols[7]:
+
+            with b_col3:
+                st.markdown("<br>", unsafe_allow_html=True)
                 down_disabled = (idx == len(st.session_state.intervals) - 1)
                 if st.button("⬇️下移", key=f"down_{idx}", disabled=down_disabled, use_container_width=True):
                     st.session_state.intervals[idx], st.session_state.intervals[idx + 1] = (
@@ -348,7 +377,8 @@ if st.session_state.intervals:
                     )
                     st.rerun()
 
-            with cols[8]:
+            with b_col4:
+                st.markdown("<br>", unsafe_allow_html=True)
                 if st.button("❌删除", key=f"del_{idx}", use_container_width=True):
                     st.session_state.intervals.pop(idx)
                     st.rerun()
@@ -383,10 +413,10 @@ else:
 
 default_end = default_start + timedelta(minutes=50)
 
-# 放在已有时间段窗口下方的添加表单（采用年月日时分秒独立小格子输入，并带有清晰的运行/停止秒数标注）
+# 放在已有时间段窗口下方的添加表单
 with st.form("interval_form"):
     st.markdown("➕ **添加新时段（开始时间已自动衔接上一时段结束时间）**")
-    
+
     st.markdown("🕒 **开始时间**")
     sy1, sy2, sy3, sy4, sy5, sy6 = st.columns(6)
     with sy1:
@@ -472,7 +502,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
             try:
                 df = df_raw.copy()
 
-                # 统一“负荷/压差”别名，同时同步更新实际使用的列名，避免 KeyError
                 rename_map = {
                     col: COLUMN_ALIASES[col]
                     for col in df.columns
@@ -565,7 +594,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                             part[actual_time_col].dt.strftime("%m-%d %H:%M:%S").tolist()
                         )
 
-                        # 负荷：填充面积 + 细线；压差：另一纵轴曲线
                         ax1.fill_between(
                             x_values,
                             part[actual_load_col].to_numpy(),
@@ -631,7 +659,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     st.pyplot(fig, use_container_width=True)
                     st.success("图表生成成功！")
 
-                    # 提供 PNG 下载，方便保存或转发
                     import io
                     image_buffer = io.BytesIO()
                     fig.savefig(

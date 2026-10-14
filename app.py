@@ -2,31 +2,14 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
 import os
-import urllib.request
 from datetime import datetime, timedelta
 
 # 设置网页布局
 st.set_page_config(page_title="设备运行数据多文件多时段汇总对比分析系统", layout="wide")
 
-# 【核心修复】云端自动下载并注册中文字体，彻底解决方框乱码问题
-@st.cache_resource
-def setup_chinese_font():
-    font_filename = "NotoSansSC-Regular.ttf"
-    if not os.path.exists(font_filename):
-        try:
-            url = "https://github.com/google/fonts/raw/main/ofl/notosanssc/NotoSansSC-Regular.ttf"
-            urllib.request.urlretrieve(url, font_filename)
-        except Exception:
-            pass
-    if os.path.exists(font_filename):
-        fm.fontManager.add_font(font_filename)
-        return fm.FontProperties(fname=font_filename).get_name()
-    return 'sans-serif'
-
-font_name = setup_chinese_font()
-plt.rcParams['font.sans-serif'] = [font_name, 'DejaVu Sans', 'sans-serif']
+# 【完美解决 Linux 乱码】直接指定 Streamlit Cloud (Debian系统) 自带的中文字体
+plt.rcParams['font.sans-serif'] = ['WenQuanYi Micro Hei', 'Droid Sans Fallback', 'Arial Unicode MS', 'sans-serif']
 plt.rcParams['axes.unicode_minus'] = False
 
 COLUMN_ALIASES = {
@@ -39,7 +22,7 @@ st.markdown("---")
 
 # --- 1. 文件上传区域 ---
 st.subheader("1. 表格文件上传（支持多选 CSV / XLSX）")
-uploaded_files = st.file_uploader("请上传您的工业数据表格文件", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("请上传您的工业数据表格文件（请确保将所有相关文件全部选中上传）", type=["csv", "xlsx", "xls"], accept_multiple_files=True)
 
 if uploaded_files:
     file_paths = []
@@ -95,7 +78,7 @@ if uploaded_files:
         threshold_input = st.text_input("负荷下限阈值 (留空则取全部数据)", value="")
         threshold = float(threshold_input) if threshold_input.strip() else None
 
-        # --- 4. 多时段对比配置（年月日时分秒独立格子输入 + 自动衔接） ---
+        # --- 4. 多时段对比配置 ---
         st.subheader("4. 多时段对比配置（自动时间衔接）")
         
         if 'intervals' not in st.session_state:
@@ -183,7 +166,7 @@ if uploaded_files:
             if not st.session_state.intervals:
                 st.warning("请至少添加一个对比时间段！")
             else:
-                with st.spinner("正在高速处理数据并应用多段独立配色绘图..."):
+                with st.spinner("正在高速处理多时段数据并绘图..."):
                     try:
                         df_all = df_all_raw.copy()
                         df_all = df_all.rename(columns=COLUMN_ALIASES)
@@ -195,7 +178,6 @@ if uploaded_files:
                         if threshold is not None:
                             df_all = df_all[df_all[load_col] >= threshold].reset_index(drop=True)
 
-                        # 多时段循环调色板（不同时段展示不同颜色区块）
                         color_palette = [
                             ("#85B2FF", "#1E3F66"),
                             ("#52C41A", "#135200"),
@@ -208,11 +190,15 @@ if uploaded_files:
                         ]
 
                         processed_dfs = []
+                        debug_info = []
+
                         for idx, item in enumerate(st.session_state.intervals):
                             s_dt = pd.to_datetime(item['start'])
                             e_dt = pd.to_datetime(item['end'])
                             sub = df_all[(df_all[time_col] >= s_dt) & (df_all[time_col] <= e_dt)].copy()
                             
+                            debug_info.append(f"时段 {idx+1} ({item['start']} ~ {item['end']}): 匹配到 {len(sub)} 行数据")
+
                             if not sub.empty:
                                 sub_res = sub.sort_values(time_col).reset_index(drop=True)
                                 bar_c, line_c = color_palette[idx % len(color_palette)]
@@ -228,8 +214,11 @@ if uploaded_files:
                                 sub_res['line_color'] = line_c
                                 processed_dfs.append(sub_res)
 
+                        # 在页面上打印调试信息，帮您排查哪个时段没对上
+                        st.info("🔍 各时段数据检索诊断：\n" + "\n".join(debug_info))
+
                         if not processed_dfs:
-                            st.warning("在指定的时间段与阈值条件下未检索到有效数据！")
+                            st.warning("在指定的所有时间段与阈值条件下均未检索到有效数据！")
                         else:
                             df_final = pd.concat(processed_dfs).reset_index(drop=True)
                             
@@ -239,7 +228,6 @@ if uploaded_files:
                             fig, ax1 = plt.subplots(figsize=(14, 8))
                             ax2 = ax1.twinx()
 
-                            # 分段绘制不同颜色的区块与曲线
                             for name in df_final['period_name'].unique():
                                 mask = df_final['period_name'] == name
                                 subset_x = [x for x, m in zip(x_indices, mask) if m]

@@ -424,22 +424,32 @@ else:
 default_end = default_start + timedelta(minutes=50)
 
 # ============================================================
-# 2. 放在下方的“添加新时段”表单（针对手机端优化：使用原生日期/时间选择控件）
+# 2. 放在下方的“添加新时段”表单（针对手机端优化：保留年月日，同时精确到时、分、秒）
 # ============================================================
 with st.container(border=True):
-    st.markdown("➕ **添加新时段**（手机端优化版：自动智能衔接上一时段结束时间）")
+    st.markdown("➕ **添加新时段**（自动智能衔接上一时段结束时间，支持精确到秒）")
     with st.form("interval_form"):
-        sc1, sc2 = st.columns(2)
+        st.markdown("📅 **开始时间**")
+        sc1, sc2, sc3, sc4 = st.columns([2, 1, 1, 1])
         with sc1:
-            start_date = st.date_input("开始日期", value=default_start.date())
+            start_date = st.date_input("日期", value=default_start.date(), key="s_date")
         with sc2:
-            start_time = st.time_input("开始时间", value=default_start.time())
+            start_hour = st.number_input("时", min_value=0, max_value=23, value=default_start.hour, key="s_h")
+        with sc3:
+            start_minute = st.number_input("分", min_value=0, max_value=59, value=default_start.minute, key="s_m")
+        with sc4:
+            start_second = st.number_input("秒", min_value=0, max_value=59, value=default_start.second, key="s_s")
 
-        ec1, ec2 = st.columns(2)
+        st.markdown("📅 **结束时间**")
+        ec1, ec2, ec3, ec4 = st.columns([2, 1, 1, 1])
         with ec1:
-            end_date = st.date_input("结束日期", value=default_end.date())
+            end_date = st.date_input("日期 ", value=default_end.date(), key="e_date")
         with ec2:
-            end_time = st.time_input("结束时间", value=default_end.time())
+            end_hour = st.number_input("时 ", min_value=0, max_value=23, value=default_end.hour, key="e_h")
+        with ec3:
+            end_minute = st.number_input("分 ", min_value=0, max_value=59, value=default_end.minute, key="e_m")
+        with ec4:
+            end_second = st.number_input("秒 ", min_value=0, max_value=59, value=default_end.second, key="e_s")
 
         run_col, stop_col, btn_col = st.columns([2, 2, 1.5])
         with run_col:
@@ -452,8 +462,14 @@ with st.container(border=True):
 
         if add_interval:
             try:
-                start_dt = datetime.combine(start_date, start_time)
-                end_dt = datetime.combine(end_date, end_time)
+                start_dt = datetime(
+                    start_date.year, start_date.month, start_date.day,
+                    int(start_hour), int(start_minute), int(start_second)
+                )
+                end_dt = datetime(
+                    end_date.year, end_date.month, end_date.day,
+                    int(end_hour), int(end_minute), int(end_second)
+                )
 
                 if start_dt >= end_dt:
                     st.error("开始时间必须早于结束时间！")

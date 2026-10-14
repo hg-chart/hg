@@ -424,15 +424,15 @@ else:
 default_end = default_start + timedelta(minutes=50)
 
 # ============================================================
-# 2. 放在下方的“添加新时段”表单（针对手机端优化：保留年月日，同时精确到时、分、秒）
+# 2. 放在下方的“添加新时段”表单（针对手机端优化：日期、时、分、秒完美同排显示）
 # ============================================================
 with st.container(border=True):
-    st.markdown("➕ **添加新时段**（自动智能衔接上一时段结束时间，支持精确到秒）")
+    st.markdown("➕ **添加新时段**（自动智能衔接，支持秒级精准配置）")
     with st.form("interval_form"):
         st.markdown("📅 **开始时间**")
-        sc1, sc2, sc3, sc4 = st.columns([2, 1, 1, 1])
+        sc1, sc2, sc3, sc4 = st.columns([2.8, 1, 1, 1])
         with sc1:
-            start_date = st.date_input("日期", value=default_start.date(), key="s_date")
+            start_date = st.date_input("日期", value=default_start.date(), key="s_date", label_visibility="collapsed")
         with sc2:
             start_hour = st.number_input("时", min_value=0, max_value=23, value=default_start.hour, key="s_h")
         with sc3:
@@ -441,9 +441,9 @@ with st.container(border=True):
             start_second = st.number_input("秒", min_value=0, max_value=59, value=default_start.second, key="s_s")
 
         st.markdown("📅 **结束时间**")
-        ec1, ec2, ec3, ec4 = st.columns([2, 1, 1, 1])
+        ec1, ec2, ec3, ec4 = st.columns([2.8, 1, 1, 1])
         with ec1:
-            end_date = st.date_input("日期 ", value=default_end.date(), key="e_date")
+            end_date = st.date_input("日期", value=default_end.date(), key="e_date", label_visibility="collapsed")
         with ec2:
             end_hour = st.number_input("时 ", min_value=0, max_value=23, value=default_end.hour, key="e_h")
         with ec3:

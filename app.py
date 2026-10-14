@@ -137,7 +137,7 @@ if active_file_paths:
         threshold_input = st.text_input("负荷下限阈值 (留空则取全部数据)", value="")
         threshold = float(threshold_input) if threshold_input.strip() else None
 
-        # --- 4. 多时段对比配置（硬盘持久化时段方案管理） ---
+        # --- 4. 多时段对比配置（核心：严格限制在半屏宽度内） ---
         st.subheader("4. 多时段对比配置")
         
         with st.expander("📁 历史时段方案管理（已实现硬盘持久化，刷新不丢失）", expanded=False):
@@ -156,11 +156,11 @@ if active_file_paths:
                         st.warning("当前还没有添加任何时段，无法保存！")
                     else:
                         st.session_state.saved_templates[new_template_name] = [dict(item) for item in st.session_state.intervals]
-                        # 写入硬盘持久化文件
                         save_persistent_templates(st.session_state.saved_templates)
                         st.success(f"方案【{new_template_name}】已成功持久化保存到硬盘！")
                         st.rerun()
 
+        # 自动时间衔接逻辑
         default_dt = datetime.now()
         if st.session_state.intervals:
             try:
@@ -178,12 +178,13 @@ if active_file_paths:
 
         default_end_dt = default_dt + timedelta(minutes=50)
 
-        with st.form("interval_form"):
-            outer_left, outer_right = st.columns(2)
+        # 关键修改：用 st.columns([1, 1]) 切分，将整个输入表单包裹在左侧【一半宽度】的容器内，拒绝满屏拉伸
+        form_col_left, form_col_right = st.columns([1, 1])
 
-            with outer_left:
-                st.markdown("🕒 **开始时间**")
-                sc1, sc2, sc3, sc4, sc5, sc6 = st.columns([1.3, 1, 1, 1, 1, 1])
+        with form_col_left:
+            with st.form("interval_form"):
+                st.markdown("🕒 **开始时间 (自动衔接)**")
+                sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
                 with sc1: s_y = st.text_input("年", value=str(default_dt.year), key="sy")
                 with sc2: s_m = st.text_input("月", value=f"{default_dt.month:02d}", key="sm")
                 with sc3: s_d = st.text_input("日", value=f"{default_dt.day:02d}", key="sd")
@@ -191,9 +192,8 @@ if active_file_paths:
                 with sc5: s_min = st.text_input("分", value=f"{default_dt.minute:02d}", key="smin")
                 with sc6: s_sec = st.text_input("秒", value=f"{default_dt.second:02d}", key="ss")
 
-            with outer_right:
                 st.markdown("🕒 **结束时间**")
-                ec1, ec2, ec3, ec4, ec5, ec6 = st.columns([1.3, 1, 1, 1, 1, 1])
+                ec1, ec2, ec3, ec4, ec5, ec6 = st.columns(6)
                 with ec1: e_y = st.text_input("年 ", value=str(default_end_dt.year), key="ey")
                 with ec2: e_m = st.text_input("月 ", value=f"{default_end_dt.month:02d}", key="em")
                 with ec3: e_d = st.text_input("日 ", value=f"{default_end_dt.day:02d}", key="ed")
@@ -201,36 +201,35 @@ if active_file_paths:
                 with ec5: e_min = st.text_input("分 ", value=f"{default_end_dt.minute:02d}", key="emin")
                 with ec6: e_sec = st.text_input("秒 ", value=f"{default_end_dt.second:02d}", key="es")
 
-            r_col1, r_col2, r_col3 = st.columns([2, 2, 1])
-            with r_col1:
-                run_sec = st.text_input("运行秒数", "30")
-            with r_col2:
-                stop_sec = st.text_input("停止秒数 (若运行为0可不填)", "780")
-            with r_col3:
-                st.write("")
-                submitted = st.form_submit_button("➕ 添加时段")
+                rc1, rc2 = st.columns(2)
+                with rc1:
+                    run_sec = st.text_input("运行秒数", "30")
+                with rc2:
+                    stop_sec = st.text_input("停止秒数 (若运行为0可不填)", "780")
+                
+                submitted = st.form_submit_button("➕ 添加时段到对比列表", use_container_width=True)
 
-            if submitted:
-                try:
-                    start_str = f"{s_y.strip()}-{s_m.strip().zfill(2)}-{s_d.strip().zfill(2)} {s_h.strip().zfill(2)}:{s_min.strip().zfill(2)}:{s_sec.strip().zfill(2)}"
-                    end_str = f"{e_y.strip()}-{e_m.strip().zfill(2)}-{e_d.strip().zfill(2)} {e_h.strip().zfill(2)}:{e_min.strip().zfill(2)}:{e_sec.strip().zfill(2)}"
-                    
-                    dt_s = pd.to_datetime(start_str)
-                    dt_e = pd.to_datetime(end_str)
-                    
-                    if dt_s >= dt_e:
-                        st.error("开始时间必须早于结束时间！")
-                    else:
-                        st.session_state.intervals.append({
-                            "start": start_str,
-                            "end": end_str,
-                            "run_sec": run_sec,
-                            "stop_sec": stop_sec if (run_sec != "0" and run_sec != "0.0") else "-"
-                        })
-                        st.success("添加成功！已自动衔接下一时段。")
-                        st.rerun()
-                except Exception as err:
-                    st.error(f"时间格式错误: {err}")
+                if submitted:
+                    try:
+                        start_str = f"{s_y.strip()}-{s_m.strip().zfill(2)}-{s_d.strip().zfill(2)} {s_h.strip().zfill(2)}:{s_min.strip().zfill(2)}:{s_sec.strip().zfill(2)}"
+                        end_str = f"{e_y.strip()}-{e_m.strip().zfill(2)}-{e_d.strip().zfill(2)} {e_h.strip().zfill(2)}:{e_min.strip().zfill(2)}:{e_sec.strip().zfill(2)}"
+                        
+                        dt_s = pd.to_datetime(start_str)
+                        dt_e = pd.to_datetime(end_str)
+                        
+                        if dt_s >= dt_e:
+                            st.error("开始时间必须早于结束时间！")
+                        else:
+                            st.session_state.intervals.append({
+                                "start": start_str,
+                                "end": end_str,
+                                "run_sec": run_sec,
+                                "stop_sec": stop_sec if (run_sec != "0" and run_sec != "0.0") else "-"
+                            })
+                            st.success("添加成功！")
+                            st.rerun()
+                    except Exception as err:
+                        st.error(f"时间格式错误: {err}")
 
         # 显示已添加的时段列表
         if st.session_state.intervals:

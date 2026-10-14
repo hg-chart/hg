@@ -23,6 +23,24 @@ st.set_page_config(
     layout="wide",
 )
 
+# 注入 CSS 确保手机端输入框可以横向排布在一行
+st.markdown("""
+<style>
+.inline-time-container {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    width: 100%;
+}
+.inline-time-container > div {
+    flex: 1;
+}
+.inline-time-container > div:first-child {
+    flex: 2.2;
+}
+</style>
+""", unsafe_allow_html=True)
+
 matplotlib.rcParams["axes.unicode_minus"] = False
 
 FONT_FILES = [
@@ -402,9 +420,12 @@ if st.session_state.intervals:
     st.markdown("---")
 
 # 自动衔接时间计算
-default_start_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+default_start = datetime.now()
 if st.session_state.intervals:
-    default_start_str = st.session_state.intervals[-1]["end"]
+    try:
+        default_start = pd.to_datetime(st.session_state.intervals[-1]["end"]).to_pydatetime()
+    except Exception:
+        pass
 else:
     try:
         parsed = pd.to_datetime(
@@ -414,25 +435,43 @@ else:
         )
         earliest = parsed.min()
         if pd.notna(earliest):
-            default_start_str = earliest.strftime("%Y-%m-%d %H:%M:%S")
+            default_start = earliest.to_pydatetime()
     except Exception:
         pass
 
-try:
-    default_end_dt = datetime.strptime(default_start_str, "%Y-%m-%d %H:%M:%S") + timedelta(minutes=50)
-    default_end_str = default_end_dt.strftime("%Y-%m-%d %H:%M:%S")
-except Exception:
-    default_end_str = default_start_str
+default_end = default_start + timedelta(minutes=50)
 
 # ============================================================
-# 2. 放在下方的“添加新时段”表单（纯文本单行输入框）
+# 2. 放在下方的“添加新时段”表单（使用 CSS 强制同行显示）
 # ============================================================
 with st.container(border=True):
-    st.markdown("➕ **添加新时段**（直接在文本框中输入纯文本，后端自动解析转换）")
+    st.markdown("➕ **添加新时段**（自动智能衔接，支持秒级精准配置）")
     with st.form("interval_form"):
-        
-        start_input = st.text_input("开始时间（纯文本）", value=default_start_str, placeholder="例如: 2026-10-14 02:12:04")
-        end_input = st.text_input("结束时间（纯文本）", value=default_end_str, placeholder="例如: 2026-10-14 03:02:04")
+        st.markdown("📅 **开始时间**")
+        st.markdown('<div class="inline-time-container">', unsafe_allow_html=True)
+        sc1, sc2, sc3, sc4 = st.columns(4)
+        with sc1:
+            start_date = st.date_input("开始日期", value=default_start.date(), key="s_date", label_visibility="collapsed")
+        with sc2:
+            start_hour = st.number_input("时", min_value=0, max_value=23, value=default_start.hour, key="s_h", label_visibility="collapsed")
+        with sc3:
+            start_minute = st.number_input("分", min_value=0, max_value=59, value=default_start.minute, key="s_m", label_visibility="collapsed")
+        with sc4:
+            start_second = st.number_input("秒", min_value=0, max_value=59, value=default_start.second, key="s_s", label_visibility="collapsed")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown("📅 **结束时间**")
+        st.markdown('<div class="inline-time-container">', unsafe_allow_html=True)
+        ec1, ec2, ec3, ec4 = st.columns(4)
+        with ec1:
+            end_date = st.date_input("结束日期", value=default_end.date(), key="e_date", label_visibility="collapsed")
+        with ec2:
+            end_hour = st.number_input("时 ", min_value=0, max_value=23, value=default_end.hour, key="e_h", label_visibility="collapsed")
+        with ec3:
+            end_minute = st.number_input("分 ", min_value=0, max_value=59, value=default_end.minute, key="e_m", label_visibility="collapsed")
+        with ec4:
+            end_second = st.number_input("秒 ", min_value=0, max_value=59, value=default_end.second, key="e_s", label_visibility="collapsed")
+        st.markdown('</div>', unsafe_allow_html=True)
 
         run_col, stop_col, btn_col = st.columns([2, 2, 1.5])
         with run_col:
@@ -445,9 +484,14 @@ with st.container(border=True):
 
         if add_interval:
             try:
-                # 后端直接对纯文本进行组合验证转换
-                start_dt = pd.to_datetime(start_input.strip())
-                end_dt = pd.to_datetime(end_input.strip())
+                start_dt = datetime(
+                    start_date.year, start_date.month, start_date.day,
+                    int(start_hour), int(start_minute), int(start_second)
+                )
+                end_dt = datetime(
+                    end_date.year, end_date.month, end_date.day,
+                    int(end_hour), int(end_minute), int(end_second)
+                )
 
                 if start_dt >= end_dt:
                     st.error("开始时间必须早于结束时间！")
@@ -456,7 +500,6 @@ with st.container(border=True):
                     end_string = end_dt.strftime("%Y-%m-%d %H:%M:%S")
                     run_text = run_seconds.strip() or "0"
                     stop_text = "-" if run_text in ("0", "0.0") else (stop_seconds.strip() or "-")
-                    
                     st.session_state.intervals.append({
                         "start": start_string,
                         "end": end_string,
@@ -466,7 +509,7 @@ with st.container(border=True):
                     st.success("时段添加成功！")
                     st.rerun()
             except Exception as exc:
-                st.error(f"时间格式错误，请检查输入（格式如：2026-10-14 02:12:04）：{exc}")
+                st.error(f"时间格式错误：{exc}")
 
 st.markdown("---")
 

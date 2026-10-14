@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
-import duckdb
 import matplotlib.pyplot as plt
 import os
 from datetime import datetime, timedelta
@@ -27,6 +26,8 @@ uploaded_files = st.file_uploader("请上传您的工业数据表格文件", typ
 
 if uploaded_files:
     file_paths = []
+    dfs_list = []
+    
     for uploaded_file in uploaded_files:
         with open(uploaded_file.name, "wb") as f:
             f.write(uploaded_file.getbuffer())
@@ -34,24 +35,32 @@ if uploaded_files:
     
     st.success(f"已成功上传 {len(uploaded_files)} 个文件。")
 
-    # 极速读取第一个文件获取表头（兼容 utf-8 与 gbk 编码）
-    sample_file = file_paths[0]
-    cols = []
+    # 极速读取所有文件并兼容多编码
     try:
-        if sample_file.lower().endswith('.csv'):
-            try:
-                df_sample = pd.read_csv(sample_file, nrows=1, encoding='utf-8')
-            except UnicodeDecodeError:
-                try:
-                    df_sample = pd.read_csv(sample_file, nrows=1, encoding='gbk')
-                except UnicodeDecodeError:
-                    df_sample = pd.read_csv(sample_file, nrows=1, encoding='gb18030')
-        else:
-            df_sample = pd.read_excel(sample_file, nrows=1)
+        for f_path in file_paths:
+            if f_path.lower().endswith('.csv'):
+                df_temp = None
+                for enc in ['utf-8', 'gbk', 'gb18030', 'latin1']:
+                    try:
+                        df_temp = pd.read_csv(f_path, encoding=enc)
+                        break
+                    except Exception:
+                        continue
+                if df_temp is None:
+                    df_temp = pd.read_csv(f_path, encoding='utf-8', errors='ignore')
+            else:
+                xls = pd.ExcelFile(f_path)
+                sheets = [pd.read_excel(f_path, sheet_name=s) for s in xls.sheet_names]
+                df_temp = pd.concat(sheets, ignore_index=True) if sheets else pd.DataFrame()
+            
+            df_temp.columns = df_temp.columns.astype(str).str.strip().str.lstrip('\ufeff')
+            dfs_list.append(df_temp)
         
-        cols = [str(c).strip() for c in df_sample.columns if pd.notna(c) and str(c).strip() != ""]
+        df_all_raw = pd.concat(dfs_list, ignore_index=True) if dfs_list else pd.DataFrame()
+        cols = [str(c).strip() for c in df_all_raw.columns if pd.notna(c) and str(c).strip() != ""]
     except Exception as e:
-        st.error(f"读取表头失败: {e}")
+        cols = []
+        st.error(f"读取文件失败: {e}")
 
     if cols:
         # --- 2. 数据列选择配置 ---
@@ -69,46 +78,77 @@ if uploaded_files:
         threshold_input = st.text_input("负荷下限阈值 (留空则取全部数据)", value="")
         threshold = float(threshold_input) if threshold_input.strip() else None
 
-        # --- 4. 多时段对比配置（含自动时间衔接） ---
-        st.subheader("4. 多时段对比配置")
+        # --- 4. 多时段对比配置（年月日时分秒独立格子输入 + 自动衔接） ---
+        st.subheader("4. 多时段对比配置（自动时间衔接）")
         
         if 'intervals' not in st.session_state:
             st.session_state.intervals = []
 
-        # 如果列表中已有数据，默认将下一个时段的开始时间设为上一个时段的结束时间
-        default_start = "2026-08-01 01:01:00"
+        # 默认起始时间（优先取上一时段结束时间，其次取表格最早时间）
+        default_dt = datetime.now()
         if st.session_state.intervals:
-            default_start = st.session_state.intervals[-1]['end']
+            try:
+                default_dt = pd.to_datetime(st.session_state.intervals[-1]['end'])
+            except Exception:
+                pass
+        else:
+            try:
+                df_all_raw[time_col] = pd.to_datetime(df_all_raw[time_col].astype(str).str.strip(), format='mixed', errors='coerce')
+                valid_min = df_all_raw[time_col].min()
+                if pd.notna(valid_min):
+                    default_dt = valid_min
+            except Exception:
+                pass
+
+        default_end_dt = default_dt + timedelta(minutes=50)
 
         with st.form("interval_form"):
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                start_time_str = st.text_input("开始时间 (格式: YYYY-MM-DD HH:MM:SS)", default_start)
-            with c2:
-                end_time_str = st.text_input("结束时间 (格式: YYYY-MM-DD HH:MM:SS)", "2026-08-01 01:01:50")
-            with c3:
+            st.markdown("🕒 **开始时间设置**")
+            sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
+            with sc1: s_y = st.text_input("开始-年", value=str(default_dt.year))
+            with sc2: s_m = st.text_input("开始-月", value=f"{default_dt.month:02d}")
+            with sc3: s_d = st.text_input("开始-日", value=f"{default_dt.day:02d}")
+            with sc4: s_h = st.text_input("开始-时", value=f"{default_dt.hour:02d}")
+            with sc5: s_min = st.text_input("开始-分", value=f"{default_dt.minute:02d}")
+            with sc6: s_sec = st.text_input("开始-秒", value=f"{default_dt.second:02d}")
+
+            st.markdown("🕒 **结束时间设置**")
+            ec1, ec2, ec3, ec4, ec5, ec6 = st.columns(6)
+            with ec1: e_y = st.text_input("结束-年", value=str(default_end_dt.year))
+            with ec2: e_m = st.text_input("结束-月", value=f"{default_end_dt.month:02d}")
+            with ec3: e_d = st.text_input("结束-日", value=f"{default_end_dt.day:02d}")
+            with ec4: e_h = st.text_input("结束-时", value=f"{default_end_dt.hour:02d}")
+            with ec5: e_min = st.text_input("结束-分", value=f"{default_end_dt.minute:02d}")
+            with ec6: e_sec = st.text_input("结束-秒", value=f"{default_end_dt.second:02d}")
+
+            rc1, rc2 = st.columns(2)
+            with rc1:
                 run_sec = st.text_input("多频集速运行秒数", "30")
-            with c4:
-                stop_sec = st.text_input("停止秒数", "780")
+            with rc2:
+                stop_sec = st.text_input("停止秒数 (若运行为0可不填)", "780")
             
             submitted = st.form_submit_button("➕ 添加该时段到对比列表")
             if submitted:
                 try:
-                    dt_s = pd.to_datetime(start_time_str)
-                    dt_e = pd.to_datetime(end_time_str)
+                    start_str = f"{s_y.strip()}-{s_m.strip().zfill(2)}-{s_d.strip().zfill(2)} {s_h.strip().zfill(2)}:{s_min.strip().zfill(2)}:{s_sec.strip().zfill(2)}"
+                    end_str = f"{e_y.strip()}-{e_m.strip().zfill(2)}-{e_d.strip().zfill(2)} {e_h.strip().zfill(2)}:{e_min.strip().zfill(2)}:{e_sec.strip().zfill(2)}"
+                    
+                    dt_s = pd.to_datetime(start_str)
+                    dt_e = pd.to_datetime(end_str)
+                    
                     if dt_s >= dt_e:
                         st.error("开始时间必须早于结束时间！")
                     else:
                         st.session_state.intervals.append({
-                            "start": start_time_str,
-                            "end": end_time_str,
+                            "start": start_str,
+                            "end": end_str,
                             "run_sec": run_sec,
                             "stop_sec": stop_sec if (run_sec != "0" and run_sec != "0.0") else "-"
                         })
                         st.success("添加成功！已自动为您衔接下一个时段的开始时间。")
                         st.rerun()
                 except Exception as err:
-                    st.error(f"时间格式错误: {err}")
+                    st.error(f"时间格式错误或数值无效: {err}")
 
         # 显示已添加的时段列表
         if st.session_state.intervals:
@@ -127,27 +167,9 @@ if uploaded_files:
             if not st.session_state.intervals:
                 st.warning("请至少添加一个对比时间段！")
             else:
-                with st.spinner("正在后台利用 DuckDB 高速处理千万级数据并绘图..."):
+                with st.spinner("正在高速处理数据并绘图..."):
                     try:
-                        # 兼容处理：针对不同编码的 CSV，DuckDB 通过指定 encoding 读取
-                        # 由于 Streamlit Cloud 会自动推断，这里我们用更稳妥的方式组合 SQL
-                        files_str = ", ".join([f"'{f}'" for f in file_paths])
-                        
-                        where_clauses = []
-                        for item in st.session_state.intervals:
-                            where_clauses.append(f"(CAST(\"{time_col}\" AS TIMESTAMP) BETWEEN TIMESTAMP '{item['start']}' AND TIMESTAMP '{item['end']}')")
-                        
-                        time_condition = " OR ".join(where_clauses)
-
-                        sql = f"""
-                            SELECT * 
-                            FROM read_csv_auto([{files_str}], UNION_BY_NAME=true, ignore_errors=true)
-                            WHERE ({time_condition})
-                        """
-                        
-                        df_all = duckdb.query(sql).df()
-                        
-                        df_all.columns = df_all.columns.astype(str).str.strip().str.lstrip('\ufeff')
+                        df_all = df_all_raw.copy()
                         df_all = df_all.rename(columns=COLUMN_ALIASES)
                         
                         df_all[time_col] = pd.to_datetime(df_all[time_col].astype(str).str.strip(), format='mixed', errors='coerce')
@@ -157,46 +179,47 @@ if uploaded_files:
                         if threshold is not None:
                             df_all = df_all[df_all[load_col] >= threshold].reset_index(drop=True)
 
-                        if df_all.empty:
+                        fig, ax1 = plt.subplots(figsize=(14, 8))
+                        ax2 = ax1.twinx()
+
+                        color_palette = [
+                            ("#85B2FF", "#1E3F66"),
+                            ("#52C41A", "#135200"),
+                            ("#FF7875", "#820014"),
+                            ("#B37FEB", "#391085"),
+                            ("#FF9C6E", "#873800"),
+                            ("#36CBCB", "#00474F"),
+                            ("#FF85C0", "#990033"),
+                            ("#D3F261", "#5B8C00")
+                        ]
+
+                        has_valid_data = False
+                        for idx, item in enumerate(st.session_state.intervals):
+                            s_dt = pd.to_datetime(item['start'])
+                            e_dt = pd.to_datetime(item['end'])
+                            sub = df_all[(df_all[time_col] >= s_dt) & (df_all[time_col] <= e_dt)]
+                            
+                            if not sub.empty:
+                                has_valid_data = True
+                                bar_c, line_c = color_palette[idx % len(color_palette)]
+                                run_s = item['run_sec']
+                                stop_s = item['stop_sec']
+                                label_desc = f"多频集速运行{run_s}s/停止{stop_s}s"
+                                
+                                act_s = sub[time_col].min().strftime('%Y-%m-%d %H:%M:%S')
+                                act_e = sub[time_col].max().strftime('%Y-%m-%d %H:%M:%S')
+                                
+                                x_vals = range(len(sub))
+                                y_load = sub[load_col]
+                                y_press = sub[pressure_col]
+
+                                ax1.fill_between(x_vals, y_load, color=bar_c, alpha=0.5, label=f"{label_desc} (实际 {act_s} ~ {act_e}) 负荷")
+                                ax1.plot(x_vals, y_load, color=bar_c, linewidth=0.8, alpha=0.8)
+                                ax2.plot(x_vals, y_press, color=line_c, linewidth=1.6, marker='o', markersize=2, label=f"{label_desc} (实际 {act_s} ~ {act_e}) 压差")
+
+                        if not has_valid_data:
                             st.warning("在指定的时间段与阈值条件下未检索到有效数据！")
                         else:
-                            fig, ax1 = plt.subplots(figsize=(14, 8))
-                            ax2 = ax1.twinx()
-
-                            color_palette = [
-                                ("#85B2FF", "#1E3F66"),
-                                ("#52C41A", "#135200"),
-                                ("#FF7875", "#820014"),
-                                ("#B37FEB", "#391085"),
-                                ("#FF9C6E", "#873800"),
-                                ("#36CBCB", "#00474F"),
-                                ("#FF85C0", "#990033"),
-                                ("#D3F261", "#5B8C00")
-                            ]
-
-                            for idx, item in enumerate(st.session_state.intervals):
-                                s_dt = pd.to_datetime(item['start'])
-                                e_dt = pd.to_datetime(item['end'])
-                                sub = df_all[(df_all[time_col] >= s_dt) & (df_all[time_col] <= e_dt)]
-                                
-                                if not sub.empty:
-                                    bar_c, line_c = color_palette[idx % len(color_palette)]
-                                    run_s = item['run_sec']
-                                    stop_s = item['stop_sec']
-                                    # 【按照您的要求：去掉“运行时间段”字样，改为多频集速运行XX秒/停止XX秒】
-                                    label_desc = f"多频集速运行{run_s}s/停止{stop_s}s"
-                                    
-                                    act_s = sub[time_col].min().strftime('%Y-%m-%d %H:%M:%S')
-                                    act_e = sub[time_col].max().strftime('%Y-%m-%d %H:%M:%S')
-                                    
-                                    x_vals = range(len(sub))
-                                    y_load = sub[load_col]
-                                    y_press = sub[pressure_col]
-
-                                    ax1.fill_between(x_vals, y_load, color=bar_c, alpha=0.5, label=f"{label_desc} (实际 {act_s} ~ {act_e}) 负荷")
-                                    ax1.plot(x_vals, y_load, color=bar_c, linewidth=0.8, alpha=0.8)
-                                    ax2.plot(x_vals, y_press, color=line_c, linewidth=1.6, marker='o', markersize=2, label=f"{label_desc} (实际 {act_s} ~ {act_e}) 压差")
-
                             ax1.set_xlabel("运行时间段", fontsize=12)
                             ax1.set_ylabel(f"负荷 ({load_col})", color='black', fontsize=12)
                             ax2.set_ylabel(f"压差 ({pressure_col})", color='black', fontsize=12)

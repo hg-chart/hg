@@ -423,81 +423,43 @@ else:
 
 default_end = default_start + timedelta(minutes=50)
 
-# 2. 放在下方的“添加新时段”表单
+# ============================================================
+# 2. 放在下方的“添加新时段”表单（针对手机端优化：使用原生日期/时间选择控件）
+# ============================================================
 with st.container(border=True):
-    st.markdown("➕ **添加新时段**（第一个时段的结束时间会自动衔接为下一个时段的开始时间，支持自由改动）")
+    st.markdown("➕ **添加新时段**（手机端优化版：自动智能衔接上一时段结束时间）")
     with st.form("interval_form"):
-        th1, th2, th3, th4, th5, th6, th7 = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2])
-        with th2:
-            st.markdown("<div style='text-align: center; font-weight: bold;'>年</div>", unsafe_allow_html=True)
-        with th3:
-            st.markdown("<div style='text-align: center; font-weight: bold;'>月</div>", unsafe_allow_html=True)
-        with th4:
-            st.markdown("<div style='text-align: center; font-weight: bold;'>日</div>", unsafe_allow_html=True)
-        with th5:
-            st.markdown("<div style='text-align: center; font-weight: bold;'>时</div>", unsafe_allow_html=True)
-        with th6:
-            st.markdown("<div style='text-align: center; font-weight: bold;'>分</div>", unsafe_allow_html=True)
-        with th7:
-            st.markdown("<div style='text-align: center; font-weight: bold;'>秒</div>", unsafe_allow_html=True)
+        sc1, sc2 = st.columns(2)
+        with sc1:
+            start_date = st.date_input("开始日期", value=default_start.date())
+        with sc2:
+            start_time = st.time_input("开始时间", value=default_start.time())
 
-        tr1, tr2, tr3, tr4, tr5, tr6, tr7 = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2])
-        with tr1:
-            st.markdown("<div style='line-height: 2.5rem; font-weight: bold;'>开始时间</div>", unsafe_allow_html=True)
-        with tr2:
-            start_year = st.text_input("开始年", value=str(default_start.year), key="sy", label_visibility="collapsed")
-        with tr3:
-            start_month = st.text_input("开始月", value=f"{default_start.month:02d}", key="sm", label_visibility="collapsed")
-        with tr4:
-            start_day = st.text_input("开始日", value=f"{default_start.day:02d}", key="sd", label_visibility="collapsed")
-        with tr5:
-            start_hour = st.text_input("开始时", value=f"{default_start.hour:02d}", key="sh", label_visibility="collapsed")
-        with tr6:
-            start_minute = st.text_input("开始分", value=f"{default_start.minute:02d}", key="smin", label_visibility="collapsed")
-        with tr7:
-            start_second = st.text_input("开始秒", value=f"{default_start.second:02d}", key="ss", label_visibility="collapsed")
+        ec1, ec2 = st.columns(2)
+        with ec1:
+            end_date = st.date_input("结束日期", value=default_end.date())
+        with ec2:
+            end_time = st.time_input("结束时间", value=default_end.time())
 
-        er1, er2, er3, er4, er5, er6, er7 = st.columns([1.5, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2])
-        with er1:
-            st.markdown("<div style='line-height: 2.5rem; font-weight: bold;'>结束时间</div>", unsafe_allow_html=True)
-        with er2:
-            end_year = st.text_input("结束年", value=str(default_end.year), key="ey", label_visibility="collapsed")
-        with er3:
-            end_month = st.text_input("结束月", value=f"{default_end.month:02d}", key="em", label_visibility="collapsed")
-        with er4:
-            end_day = st.text_input("结束日", value=f"{default_end.day:02d}", key="ed", label_visibility="collapsed")
-        with er5:
-            end_hour = st.text_input("结束时", value=f"{default_end.hour:02d}", key="eh", label_visibility="collapsed")
-        with er6:
-            end_minute = st.text_input("结束分", value=f"{default_end.minute:02d}", key="emin", label_visibility="collapsed")
-        with er7:
-            end_second = st.text_input("结束秒", value=f"{default_end.second:02d}", key="es", label_visibility="collapsed")
-
-        run_col, stop_col, btn_col = st.columns([2, 4, 1.5])
+        run_col, stop_col, btn_col = st.columns([2, 2, 1.5])
         with run_col:
             run_seconds = st.text_input("多频集速运行秒数", value="30")
         with stop_col:
-            stop_seconds = st.text_input("停止秒数（若运行为0，此处自动为-）", value="780")
+            stop_seconds = st.text_input("停止秒数（若为0可不填）", value="780")
         with btn_col:
             st.write("")
             add_interval = st.form_submit_button("添加时段", use_container_width=True)
 
         if add_interval:
             try:
-                start_string = (
-                    f"{start_year.strip()}-{start_month.strip().zfill(2)}-{start_day.strip().zfill(2)} "
-                    f"{start_hour.strip().zfill(2)}:{start_minute.strip().zfill(2)}:{start_second.strip().zfill(2)}"
-                )
-                end_string = (
-                    f"{end_year.strip()}-{end_month.strip().zfill(2)}-{end_day.strip().zfill(2)} "
-                    f"{end_hour.strip().zfill(2)}:{end_minute.strip().zfill(2)}:{end_second.strip().zfill(2)}"
-                )
-                start_dt = pd.to_datetime(start_string)
-                end_dt = pd.to_datetime(end_string)
+                start_dt = datetime.combine(start_date, start_time)
+                end_dt = datetime.combine(end_date, end_time)
 
                 if start_dt >= end_dt:
                     st.error("开始时间必须早于结束时间！")
                 else:
+                    start_string = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+                    end_string = end_dt.strftime("%Y-%m-%d %H:%M:%S")
                     run_text = run_seconds.strip() or "0"
                     stop_text = "-" if run_text in ("0", "0.0") else (stop_seconds.strip() or "-")
                     st.session_state.intervals.append({
@@ -684,7 +646,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
 
                     fig.subplots_adjust(bottom=0.32, top=0.90, left=0.09, right=0.91)
                     
-                    # 将生成的图表保存到 session_state 中，确保下载后不会消失
                     import io
                     image_buffer = io.BytesIO()
                     fig.savefig(

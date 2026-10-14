@@ -425,25 +425,14 @@ except Exception:
     default_end_str = default_start_str
 
 # ============================================================
-# 2. 放在下方的“添加新时段”表单（纯文本输入框并排在同一行）
+# 2. 放在下方的“添加新时段”表单（纯文本单行输入框）
 # ============================================================
 with st.container(border=True):
-    st.markdown("➕ **添加新时段**（直接在纯文本框中输入，日期和时间完美并排在同一行）")
+    st.markdown("➕ **添加新时段**（直接在文本框中输入纯文本，后端自动解析转换）")
     with st.form("interval_form"):
         
-        st.markdown("📅 **开始时间**")
-        sc1, sc2 = st.columns(2)
-        with sc1:
-            start_date_input = st.text_input("开始日期", value=default_start_str[:10], placeholder="例如: 2026-10-14")
-        with sc2:
-            start_time_input = st.text_input("开始时间", value=default_start_str[11:], placeholder="例如: 02:12:04")
-
-        st.markdown("📅 **结束时间**")
-        ec1, ec2 = st.columns(2)
-        with ec1:
-            end_date_input = st.text_input("结束日期", value=default_end_str[:10], placeholder="例如: 2026-10-14")
-        with ec2:
-            end_time_input = st.text_input("结束时间", value=default_end_str[11:], placeholder="例如: 03:02:04")
+        start_input = st.text_input("开始时间（纯文本）", value=default_start_str, placeholder="例如: 2026-10-14 02:12:04")
+        end_input = st.text_input("结束时间（纯文本）", value=default_end_str, placeholder="例如: 2026-10-14 03:02:04")
 
         run_col, stop_col, btn_col = st.columns([2, 2, 1.5])
         with run_col:
@@ -456,12 +445,9 @@ with st.container(border=True):
 
         if add_interval:
             try:
-                start_full = f"{start_date_input.strip()} {start_time_input.strip()}"
-                end_full = f"{end_date_input.strip()} {end_time_input.strip()}"
-                
-                # 后端自动解析验证
-                start_dt = pd.to_datetime(start_full)
-                end_dt = pd.to_datetime(end_full)
+                # 后端直接对纯文本进行组合验证转换
+                start_dt = pd.to_datetime(start_input.strip())
+                end_dt = pd.to_datetime(end_input.strip())
 
                 if start_dt >= end_dt:
                     st.error("开始时间必须早于结束时间！")
@@ -480,7 +466,7 @@ with st.container(border=True):
                     st.success("时段添加成功！")
                     st.rerun()
             except Exception as exc:
-                st.error(f"时间格式错误，请检查输入（格式如：日期输入 2026-10-14，时间输入 02:12:04）：{exc}")
+                st.error(f"时间格式错误，请检查输入（格式如：2026-10-14 02:12:04）：{exc}")
 
 st.markdown("---")
 

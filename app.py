@@ -284,7 +284,114 @@ with st.expander("📁 历史时段方案管理", expanded=False):
                     st.success(f"方案“{template_name.strip()}”已保存。")
                     st.rerun()
 
-# 自动衔接时间计算：若已有时段，则新添加时段的开始时间默认自动衔接上一时段结束时间
+# 1. 先在上方展示已添加的对比时段表格及管理按钮区
+if st.session_state.intervals:
+    st.write("当前已添加的对比时段（图表按此顺序依次排列）。勾选“选择”后，可在下方修改、上移/下移或删除：")
+
+    table_data = []
+    for idx, item in enumerate(st.session_state.intervals):
+        table_data.append({
+            "选择": False,
+            "序号": idx + 1,
+            "开始时间": item["start"],
+            "结束时间": item["end"],
+            "多频集速运行(s)": item.get("run_sec", "0"),
+            "多频集速停止(s)": item.get("stop_sec", "-"),
+        })
+
+    df_intervals = pd.DataFrame(table_data)
+
+    edited_df = st.data_editor(
+        df_intervals,
+        column_config={
+            "选择": st.column_config.CheckboxColumn("选择", required=True),
+            "序号": st.column_config.NumberColumn("序号", disabled=True),
+        },
+        disabled=["序号"],
+        hide_index=True,
+        use_container_width=True,
+        key="intervals_editor"
+    )
+
+    bcol1, bcol2, bcol3, bcol4, bcol5 = st.columns(5)
+
+    with bcol1:
+        if st.button("💾 保存修改", use_container_width=True):
+            try:
+                new_intervals = []
+                for _, row in edited_df.iterrows():
+                    s_str = str(row["开始时间"]).strip()
+                    e_str = str(row["结束时间"]).strip()
+                    pd.to_datetime(s_str)
+                    pd.to_datetime(e_str)
+                    new_intervals.append({
+                        "start": s_str,
+                        "end": e_str,
+                        "run_sec": str(row["多频集速运行(s)"]).strip() or "0",
+                        "stop_sec": str(row["多频集速停止(s)"]).strip() or "-",
+                    })
+                st.session_state.intervals = new_intervals
+                st.success("修改已成功保存！")
+                st.rerun()
+            except Exception as ex:
+                st.error(f"保存失败，请检查时间格式是否正确: {ex}")
+
+    with bcol2:
+        if st.button("⬆️ 上移", use_container_width=True):
+            selected_indices = edited_df.index[edited_df["选择"] == True].tolist()
+            if not selected_indices:
+                st.warning("请先勾选要上移的时段！")
+            elif len(selected_indices) > 1:
+                st.warning("每次只能上移一个时段！")
+            else:
+                idx = selected_indices[0]
+                if idx == 0:
+                    st.info("已经是第一个时段，无法上移。")
+                else:
+                    st.session_state.intervals[idx], st.session_state.intervals[idx - 1] = (
+                        st.session_state.intervals[idx - 1],
+                        st.session_state.intervals[idx],
+                    )
+                    st.rerun()
+
+    with bcol3:
+        if st.button("⬇️ 下移", use_container_width=True):
+            selected_indices = edited_df.index[edited_df["选择"] == True].tolist()
+            if not selected_indices:
+                st.warning("请先勾选要下移的时段！")
+            elif len(selected_indices) > 1:
+                st.warning("每次只能下移一个时段！")
+            else:
+                idx = selected_indices[0]
+                if idx == len(st.session_state.intervals) - 1:
+                    st.info("已经是最后一个时段，无法下移。")
+                else:
+                    st.session_state.intervals[idx], st.session_state.intervals[idx + 1] = (
+                        st.session_state.intervals[idx + 1],
+                        st.session_state.intervals[idx],
+                    )
+                    st.rerun()
+
+    with bcol4:
+        if st.button("❌ 删除", use_container_width=True):
+            selected_indices = edited_df.index[edited_df["选择"] == True].tolist()
+            if not selected_indices:
+                st.warning("请先勾选要删除的时段！")
+            else:
+                for idx in sorted(selected_indices, reverse=True):
+                    st.session_state.intervals.pop(idx)
+                st.success("已删除选中时段！")
+                st.rerun()
+
+    with bcol5:
+        if st.button("🗑️ 清空", use_container_width=True):
+            st.session_state.intervals = []
+            st.success("已清空所有时段！")
+            st.rerun()
+
+    st.markdown("---")
+
+# 自动衔接时间计算：若已有时段，新添加时段的开始时间默认自动衔接上一时段结束时间
 default_start = datetime.now()
 if st.session_state.intervals:
     try:
@@ -306,7 +413,7 @@ else:
 
 default_end = default_start + timedelta(minutes=50)
 
-# 添加新时段表单
+# 2. 放在下方的“添加新时段”表单
 with st.container(border=True):
     st.markdown("➕ **添加新时段**（第一个时段的结束时间会自动衔接为下一个时段的开始时间，支持自由改动）")
     with st.form("interval_form"):
@@ -377,117 +484,6 @@ with st.container(border=True):
                     st.rerun()
             except Exception as exc:
                 st.error(f"时间格式错误：{exc}")
-
-# 已添加时段表格及控制区（支持复选框选择、直接单元格双击修改、上移/下移/删除/清空）
-if st.session_state.intervals:
-    st.markdown("---")
-    st.write("当前已添加的对比时段（图表按此顺序依次排列）。勾选“选择”后，可在下方修改、上移/下移或删除：")
-
-    # 构造表格展示数据（增加“选择”列）
-    table_data = []
-    for idx, item in enumerate(st.session_state.intervals):
-        table_data.append({
-            "选择": False,
-            "序号": idx + 1,
-            "开始时间": item["start"],
-            "结束时间": item["end"],
-            "多频集速运行(s)": item.get("run_sec", "0"),
-            "多频集速停止(s)": item.get("stop_sec", "-"),
-        })
-
-    df_intervals = pd.DataFrame(table_data)
-
-    # 使用可编辑表格
-    edited_df = st.data_editor(
-        df_intervals,
-        column_config={
-            "选择": st.column_config.CheckboxColumn("选择", required=True),
-            "序号": st.column_config.NumberColumn("序号", disabled=True),
-        },
-        disabled=["序号"],
-        hide_index=True,
-        use_container_width=True,
-        key="intervals_editor"
-    )
-
-    # 底部操作按钮行
-    bcol1, bcol2, bcol3, bcol4, bcol5 = st.columns(5)
-
-    with bcol1:
-        if st.button("💾 保存修改", use_container_width=True):
-            try:
-                new_intervals = []
-                for _, row in edited_df.iterrows():
-                    s_str = str(row["开始时间"]).strip()
-                    e_str = str(row["结束时间"]).strip()
-                    # 校验时间格式
-                    pd.to_datetime(s_str)
-                    pd.to_datetime(e_str)
-                    new_intervals.append({
-                        "start": s_str,
-                        "end": e_str,
-                        "run_sec": str(row["多频集速运行(s)"]).strip() or "0",
-                        "stop_sec": str(row["多频集速停止(s)"]).strip() or "-",
-                    })
-                st.session_state.intervals = new_intervals
-                st.success("修改已成功保存！")
-                st.rerun()
-            except Exception as ex:
-                st.error(f"保存失败，请检查时间格式是否正确: {ex}")
-
-    with bcol2:
-        if st.button("⬆️ 上移", use_container_width=True):
-            selected_indices = edited_df.index[edited_df["选择"] == True].tolist()
-            if not selected_indices:
-                st.warning("请先勾选要上移的时段！")
-            elif len(selected_indices) > 1:
-                st.warning("每次只能上移一个时段！")
-            else:
-                idx = selected_indices[0]
-                if idx == 0:
-                    st.info("已经是第一个时段，无法上移。")
-                else:
-                    st.session_state.intervals[idx], st.session_state.intervals[idx - 1] = (
-                        st.session_state.intervals[idx - 1],
-                        st.session_state.intervals[idx],
-                    )
-                    st.rerun()
-
-    with bcol3:
-        if st.button("⬇️ 下移", use_container_width=True):
-            selected_indices = edited_df.index[edited_df["选择"] == True].tolist()
-            if not selected_indices:
-                st.warning("请先勾选要下移的时段！")
-            elif len(selected_indices) > 1:
-                st.warning("每次只能下移一个时段！")
-            else:
-                idx = selected_indices[0]
-                if idx == len(st.session_state.intervals) - 1:
-                    st.info("已经是最后一个时段，无法下移。")
-                else:
-                    st.session_state.intervals[idx], st.session_state.intervals[idx + 1] = (
-                        st.session_state.intervals[idx + 1],
-                        st.session_state.intervals[idx],
-                    )
-                    st.rerun()
-
-    with bcol4:
-        if st.button("❌ 删除", use_container_width=True):
-            selected_indices = edited_df.index[edited_df["选择"] == True].tolist()
-            if not selected_indices:
-                st.warning("请先勾选要删除的时段！")
-            else:
-                # 倒序弹出以防索引错位
-                for idx in sorted(selected_indices, reverse=True):
-                    st.session_state.intervals.pop(idx)
-                st.success("已删除选中时段！")
-                st.rerun()
-
-    with bcol5:
-        if st.button("🗑️ 清空", use_container_width=True):
-            st.session_state.intervals = []
-            st.success("已清空所有时段！")
-            st.rerun()
 
 st.markdown("---")
 

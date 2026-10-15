@@ -225,14 +225,12 @@ existing_files = sorted(
 
 active_paths = []
 if existing_files:
-    # 按照您的要求，将原标题修改为“选择需要分析的文件”
     with st.expander("📁 选择需要分析的文件", expanded=True):
         st.write("请在下方勾选本次分析所需的文件：")
 
         if "file_selections" not in st.session_state:
             st.session_state.file_selections = {}
 
-        # 同步初始化文件选择状态
         for name in existing_files:
             if name not in st.session_state.file_selections:
                 st.session_state.file_selections[name] = True
@@ -250,7 +248,6 @@ if existing_files:
 
         active_paths = [os.path.join(VAULT_DIR, name) for name in selected_files]
 
-    # 将“当前已选择 X 个文件参与分析。”放到原批量删除按钮的位置
     st.success(f"当前已选择 {len(active_paths)} 个文件参与分析。")
 
 # ============================================================
@@ -293,7 +290,6 @@ with st.expander("🗑️ 文件删除与回收站管理（如需清理历史文
     else:
         st.info("当前文件库中暂无文件。")
 
-    # 文件回收站管理模块
     trashed_files = sorted(
         name for name in os.listdir(FILE_TRASH_DIR)
         if name.lower().endswith((".csv", ".xlsx", ".xls"))
@@ -381,7 +377,6 @@ if not columns:
 st.subheader("2. 数据列选择配置")
 col1, col2, col3 = st.columns(3)
 
-# 默认负荷左纵轴为 W3.UNIT1.10DEHDCSAI03（如果存在于列中）
 default_load_index = min(1, len(columns) - 1)
 if "W3.UNIT1.10DEHDCSAI03" in columns:
     default_load_index = columns.index("W3.UNIT1.10DEHDCSAI03")
@@ -407,12 +402,11 @@ if threshold_text.strip():
 
 
 # ============================================================
-# 7. 机组运行数据时间段选择（统一命名与回收站）
+# 7. 机组运行数据时间段选择（统一命名与回收站）—— 已加上“（必选）”红字提示
 # ============================================================
 
-st.subheader("4. 机组运行数据时间段选择")
+st.markdown("### 4. 机组运行数据时间段选择 <span style='color:red; font-size:18px;'>（必选）</span>", unsafe_allow_html=True)
 
-# 生成带有起止时间标注的选项列表（X 列表）
 template_options = {}
 for name, intervals_list in st.session_state.saved_templates.items():
     if intervals_list and isinstance(intervals_list, list):
@@ -426,7 +420,6 @@ for name, intervals_list in st.session_state.saved_templates.items():
 if template_options:
     options_list = list(template_options.keys())
     
-    # 每一行展示：选择下拉框、确认按钮、删除按钮
     for opt_label in options_list:
         actual_key = template_options[opt_label]
         sc1, sc2, sc3 = st.columns([5, 1, 1])
@@ -441,10 +434,8 @@ if template_options:
                 st.rerun()
         with sc3:
             if st.button("删除", key=f"delete_{actual_key}", use_container_width=True):
-                # 放入回收站
                 st.session_state.trash_bin[actual_key] = st.session_state.saved_templates[actual_key]
                 save_trash_bin(st.session_state.trash_bin)
-                # 从活动方案中移除
                 del st.session_state.saved_templates[actual_key]
                 save_persistent_templates(st.session_state.saved_templates)
                 st.success(f"已将 {actual_key} 移入回收站。")
@@ -452,7 +443,6 @@ if template_options:
 else:
     st.info("暂无可用的时间段方案。")
 
-# 回收站管理模块
 if st.session_state.trash_bin:
     with st.expander("🗑️ 回收站（防止误删除）", expanded=False):
         st.write("以下是被删除的时间段方案，您可以选择恢复或彻底删除：")
@@ -482,7 +472,6 @@ if st.session_state.trash_bin:
 
 st.markdown("---")
 
-# 1. 先在上方展示已添加的对比时段表格及管理按钮区
 if st.session_state.intervals:
     st.write("当前已选择的时间段（图表按此顺序依次排列）。勾选“选择”后，可在下方修改、上移/下移或删除：")
 
@@ -601,7 +590,6 @@ if st.session_state.intervals:
             else:
                 for idx in sorted(selected_indices, reverse=True):
                     st.session_state.intervals.pop(idx)
-                # 如果删空了，立即清除图表缓存
                 if not st.session_state.intervals:
                     st.session_state.plotted_fig_bytes = None
                     st.session_state.plotted_title = ""
@@ -620,7 +608,6 @@ if st.session_state.intervals:
 
     st.markdown("---")
 
-# 自动衔接时间计算
 default_start = datetime.now()
 if st.session_state.intervals:
     try:
@@ -642,9 +629,6 @@ else:
 
 default_end = default_start + timedelta(minutes=50)
 
-# ============================================================
-# 2. 放在下方的“添加新时段”表单
-# ============================================================
 with st.container(border=True):
     st.markdown("➕ **添加新时段**（自动智能衔接，支持秒级精准配置）")
     with st.form("interval_form"):
@@ -719,7 +703,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
     if not threshold_valid:
         st.error("请先把负荷下限阈值修改为有效数字。")
     elif not st.session_state.intervals:
-        # 当没有选择任何时间段时，立刻清空旧图表及提示缓存，避免产生视觉混淆
         st.session_state.plotted_fig_bytes = None
         st.session_state.plotted_title = ""
         st.session_state.plotted_periods_info = []
@@ -859,6 +842,29 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax1.grid(True, axis="y", linestyle="-", linewidth=0.6, alpha=0.35)
                     ax1.set_axisbelow(True)
 
+                    # ============================================================
+                    # 动态添加压差右纵轴的标志性横向参考线（1400, 1800, 2000）
+                    # ============================================================
+                    p_min, p_max = ax2.get_ylim()
+                    marker_pressures = [1400, 1800, 2000]
+                    for p_val in marker_pressures:
+                        if p_min <= p_val <= p_max:
+                            ax2.axhline(
+                                y=p_val,
+                                color="grey",
+                                linestyle="--",
+                                linewidth=0.8,
+                                alpha=0.6
+                            )
+                            # 在右侧边缘标注文字提示标志性数值
+                            ax2.text(
+                                1.002, p_val, f" {p_val}",
+                                transform=ax2.get_yaxis_transform(),
+                                fontsize=9,
+                                color="dimgray",
+                                verticalalignment="center"
+                            )
+
                     total_points = len(all_x_labels)
                     tick_step = max(1, total_points // 10)
                     tick_positions = list(range(0, total_points, tick_step))
@@ -912,12 +918,10 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                 if fig is not None:
                     plt.close(fig)
 
-# 持续渲染已保存的图表与图片外部带有颜色块的独立说明
 if st.session_state.plotted_fig_bytes is not None and st.session_state.intervals:
     st.success("图表生成成功！")
     st.image(st.session_state.plotted_fig_bytes, caption=st.session_state.plotted_title, use_container_width=True)
     
-    # 纯文字独立标注区域（带图表对应颜色标记块）
     with st.container(border=True):
         st.markdown("📋 **【查看专用】各时段详细起止与配置说明**（下载图片时不会包含此段文字）：")
         for info_item in st.session_state.plotted_periods_info:

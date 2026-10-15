@@ -18,86 +18,7 @@ from matplotlib import font_manager, ticker
 
 
 # ============================================================
-# 1. 页面与中文字体
-# ============================================================
-
-st.set_page_config(
-    page_title="设备运行数据多文件多时段汇总对比分析系统",
-    layout="wide",
-)
-
-matplotlib.rcParams["axes.unicode_minus"] = False
-
-FONT_FILES = [
-    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf",
-    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttf",
-]
-
-for font_path in FONT_FILES:
-    if os.path.isfile(font_path):
-        try:
-            font_manager.fontManager.addfont(font_path)
-        except Exception:
-            pass
-
-PREFERRED_FONTS = [
-    "WenQuanYi Zen Hei",
-    "WenQuanYi Micro Hei",
-    "Noto Sans CJK SC",
-    "Noto Sans SC",
-    "SimHei",
-    "Microsoft YaHei",
-]
-
-available_fonts = {font.name for font in font_manager.fontManager.ttflist}
-selected_font = next(
-    (name for name in PREFERRED_FONTS if name in available_fonts),
-    None,
-)
-
-if selected_font:
-    matplotlib.rcParams["font.family"] = "sans-serif"
-    matplotlib.rcParams["font.sans-serif"] = [selected_font, "DejaVu Sans"]
-    logging.warning("Matplotlib 中文字体：%s", selected_font)
-else:
-    logging.error(
-        "没有检测到中文字体。请检查根目录 packages.txt 是否包含 "
-        "fonts-wqy-zenhei、fonts-wqy-microhei、fontconfig，并查看部署日志。"
-    )
-
-COLUMN_ALIASES = {
-    "压差": "W3.FW.AHTE10CP201F",
-    "负荷": "W3.UNIT1.10DEHDCSAI03",
-}
-
-st.title("📊 设备运行数据多文件多时段汇总对比分析系统")
-st.markdown("---")
-
-if _get_r2_client() is not None:
-    st.caption("☁️ Cloudflare R2：已连接（私有存储）")
-else:
-    st.warning("Cloudflare R2 尚未连接，当前仍使用本地临时存储。请在 Streamlit Secrets 中配置 R2 凭据。" + (f" 配置提示：{_R2_ERROR}" if _R2_ERROR else ""))
-
-
-# ============================================================
-# 2. 文件库和历史时段方案（增加回收站支持）
-# ============================================================
-
-VAULT_DIR = "uploaded_vault"
-FILE_TRASH_DIR = "file_trash_vault"
-os.makedirs(VAULT_DIR, exist_ok=True)
-os.makedirs(FILE_TRASH_DIR, exist_ok=True)
-
-TEMPLATES_FILE = os.path.join(VAULT_DIR, "templates_vault.json")
-TRASH_FILE = os.path.join(VAULT_DIR, "trash_vault.json")
-CHART_HISTORY_DIR = "chart_history"
-os.makedirs(CHART_HISTORY_DIR, exist_ok=True)
-
-# ============================================================
-# Cloudflare R2 持久化层
-# 通过 Streamlit Secrets 读取密钥；未配置时保留原有本地功能。
+# 1. Cloudflare R2 持久化层（已提前到最顶部定义，避免调用未定义函数）
 # ============================================================
 
 R2_PREFIX = "device-monitor/"
@@ -229,8 +150,7 @@ def sync_local_storage_with_r2():
     if remote_keys is None:
         return False
     remote_set = set(remote_keys)
-    local_dirs = [VAULT_DIR, FILE_TRASH_DIR, CHART_HISTORY_DIR]
-    # 先把云端已有文件恢复到本地；同名文件以云端版本为准。
+    local_dirs = [VAULT_DIR, FILE_TRASH_DIR, CHART_HISTORY_DIR] if 'VAULT_DIR' in globals() else ["uploaded_vault", "file_trash_vault", "chart_history"]
     for remote_key in remote_keys:
         rel = remote_key[len(R2_PREFIX):]
         if not rel or rel.startswith("../") or "/../" in rel:
@@ -242,22 +162,97 @@ def sync_local_storage_with_r2():
             local_path.write_bytes(response["Body"].read())
         except Exception:
             logging.exception("恢复 R2 文件失败：%s", rel)
-    # 把本地独有文件补传，迁移既有文件时不会覆盖云端同名对象。
     for folder in local_dirs:
-        for path in Path(folder).rglob("*"):
-            if path.is_file():
-                key = _r2_key(path.as_posix())
-                if key not in remote_set:
-                    r2_upload_file(path, path.as_posix())
+        if os.path.exists(folder):
+            for path in Path(folder).rglob("*"):
+                if path.is_file():
+                    key = _r2_key(path.as_posix())
+                    if key not in remote_set:
+                        r2_upload_file(path, path.as_posix())
     return True
 
 
-# R2 配置完成时启动恢复/补传。若配置尚未填好，不影响原有本地功能。
+# ============================================================
+# 2. 页面配置与中文字体
+# ============================================================
+
+st.set_page_config(
+    page_title="设备运行数据多文件多时段汇总对比分析系统",
+    layout="wide",
+)
+
+matplotlib.rcParams["axes.unicode_minus"] = False
+
+FONT_FILES = [
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttf",
+]
+
+for font_path in FONT_FILES:
+    if os.path.isfile(font_path):
+        try:
+            font_manager.fontManager.addfont(font_path)
+        except Exception:
+            pass
+
+PREFERRED_FONTS = [
+    "WenQuanYi Zen Hei",
+    "WenQuanYi Micro Hei",
+    "Noto Sans CJK SC",
+    "Noto Sans SC",
+    "SimHei",
+    "Microsoft YaHei",
+]
+
+available_fonts = {font.name for font in font_manager.fontManager.ttflist}
+selected_font = next(
+    (name for name in PREFERRED_FONTS if name in available_fonts),
+    None,
+)
+
+if selected_font:
+    matplotlib.rcParams["font.family"] = "sans-serif"
+    matplotlib.rcParams["font.sans-serif"] = [selected_font, "DejaVu Sans"]
+    logging.warning("Matplotlib 中文字体：%s", selected_font)
+else:
+    logging.error(
+        "没有检测到中文字体。请检查根目录 packages.txt 是否包含 "
+        "fonts-wqy-zenhei、fonts-wqy-microhei、fontconfig，并查看部署日志。"
+    )
+
+COLUMN_ALIASES = {
+    "压差": "W3.FW.AHTE10CP201F",
+    "负荷": "W3.UNIT1.10DEHDCSAI03",
+}
+
+st.title("📊 设备运行数据多文件多时段汇总对比分析系统")
+st.markdown("---")
+
 if _get_r2_client() is not None:
     if not st.session_state.get("_r2_initial_sync_done", False):
         with st.spinner("正在连接 Cloudflare R2 并恢复历史文件……"):
             sync_local_storage_with_r2()
         st.session_state["_r2_initial_sync_done"] = True
+    st.caption("☁️ Cloudflare R2：已连接（私有存储）")
+else:
+    st.warning("Cloudflare R2 尚未连接，当前仍使用本地临时存储。请在 Streamlit Secrets 中配置 R2 凭据。" + (f" 配置提示：{_R2_ERROR}" if _R2_ERROR else ""))
+
+
+# ============================================================
+# 3. 文件库和历史时段方案（增加回收站支持）
+# ============================================================
+
+VAULT_DIR = "uploaded_vault"
+FILE_TRASH_DIR = "file_trash_vault"
+os.makedirs(VAULT_DIR, exist_ok=True)
+os.makedirs(FILE_TRASH_DIR, exist_ok=True)
+
+TEMPLATES_FILE = os.path.join(VAULT_DIR, "templates_vault.json")
+TRASH_FILE = os.path.join(VAULT_DIR, "trash_vault.json")
+CHART_HISTORY_DIR = "chart_history"
+os.makedirs(CHART_HISTORY_DIR, exist_ok=True)
 
 
 def default_templates():
@@ -352,7 +347,7 @@ if not st.session_state.intervals:
 
 
 # ============================================================
-# 3. 上传及选择数据文件
+# 4. 上传及选择数据文件
 # ============================================================
 
 st.subheader("1. 表格文件管理（支持上传和调用历史文件）")
@@ -439,7 +434,7 @@ if existing_files:
     st.success(f"当前已选择 {len(active_paths)} 个文件参与分析。")
 
 # ============================================================
-# 4. 文件删除与回收站管理
+# 5. 文件删除与回收站管理
 # ============================================================
 with st.expander("🗑️ 文件删除与回收站管理（如需清理历史文件请展开）", expanded=False):
     st.write("勾选不需要的文件进行批量删除，删除后的文件可随时在下方回收站恢复：")
@@ -525,7 +520,7 @@ if not active_paths:
 
 
 # ============================================================
-# 5. 读取 CSV / Excel
+# 6. 读取 CSV / Excel
 # ============================================================
 
 try:
@@ -571,7 +566,7 @@ if not columns:
 
 
 # ============================================================
-# 6. 数据列和负荷过滤
+# 7. 数据列和负荷过滤
 # ============================================================
 
 st.subheader("2. 数据列选择配置")
@@ -602,7 +597,7 @@ if threshold_text.strip():
 
 
 # ============================================================
-# 7. 机组运行数据时间段选择
+# 8. 机组运行数据时间段选择
 # ============================================================
 
 st.markdown("### 4. 机组运行数据时间段选择 <span style='color:red; font-size:18px;'>（必选）</span>", unsafe_allow_html=True)
@@ -875,334 +870,16 @@ with st.container(border=True):
                     end_date.year, end_date.month, end_date.day,
                     int(end_hour), int(end_minute), int(end_second)
                 )
-
-                if start_dt >= end_dt:
-                    st.error("开始时间必须早于结束时间！")
+                if end_dt <= start_dt:
+                    st.error("结束时间必须大于开始时间！")
                 else:
-                    start_string = start_dt.strftime("%Y-%m-%d %H:%M:%S")
-                    end_string = end_dt.strftime("%Y-%m-%d %H:%M:%S")
-                    run_text = run_seconds.strip() or "0"
-                    stop_text = "-" if run_text in ("0", "0.0") else (stop_seconds.strip() or "-")
                     st.session_state.intervals.append({
-                        "start": start_string,
-                        "end": end_string,
-                        "run_sec": run_text,
-                        "stop_sec": stop_text,
+                        "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                        "end": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                        "run_sec": run_seconds.strip() or "0",
+                        "stop_sec": stop_seconds.strip() or "-",
                     })
-                    st.success("时段添加成功！")
+                    st.success("成功添加新时段！")
                     st.rerun()
-            except Exception as exc:
-                st.error(f"时间格式错误：{exc}")
-
-st.markdown("---")
-
-
-# ============================================================
-# 8. 生成多时段趋势图
-# ============================================================
-
-if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
-    if not threshold_valid:
-        st.error("请先把负荷下限阈值修改为有效数字。")
-    elif not st.session_state.intervals:
-        st.session_state.plotted_fig_bytes = None
-        st.session_state.plotted_title = ""
-        st.session_state.plotted_periods_info = []
-        st.warning("请至少添加一个对比时间段！")
-    else:
-        with st.spinner("正在处理多时段数据并绘图……"):
-            fig = None
-            try:
-                df = df_raw.copy()
-
-                rename_map = {
-                    col: COLUMN_ALIASES[col]
-                    for col in df.columns
-                    if col in COLUMN_ALIASES
-                }
-                df = df.rename(columns=COLUMN_ALIASES)
-                actual_time_col = rename_map.get(time_col, time_col)
-                actual_load_col = rename_map.get(load_col, load_col)
-                actual_pressure_col = rename_map.get(pressure_col, pressure_col)
-
-                required = [actual_time_col, actual_load_col, actual_pressure_col]
-                missing = [col for col in required if col not in df.columns]
-                if missing:
-                    raise KeyError("找不到所选数据列：" + "、".join(missing))
-
-                df[actual_time_col] = pd.to_datetime(
-                    df[actual_time_col].astype(str).str.strip(),
-                    format="mixed",
-                    errors="coerce",
-                )
-                df[actual_load_col] = pd.to_numeric(df[actual_load_col], errors="coerce")
-                df[actual_pressure_col] = pd.to_numeric(df[actual_pressure_col], errors="coerce")
-                df = df.dropna(subset=[actual_time_col, actual_load_col])
-                df = df.sort_values(actual_time_col).reset_index(drop=True)
-                df = df[df[actual_load_col] != 0].copy()
-
-                if threshold is not None:
-                    df = df[df[actual_load_col] >= threshold].copy()
-
-                palette = [
-                    ("#85B2FF", "#1E3F66"),
-                    ("#52C41A", "#135200"),
-                    ("#FF7875", "#820014"),
-                    ("#B37FEB", "#391085"),
-                    ("#FF9C6E", "#873800"),
-                    ("#36CBCB", "#00474F"),
-                    ("#FF85C0", "#990033"),
-                    ("#D3F261", "#5B8C00"),
-                ]
-
-                plotted_periods = []
-                diagnostics = []
-                periods_detailed_info = []
-
-                for index, interval in enumerate(st.session_state.intervals):
-                    start_dt = pd.to_datetime(interval["start"])
-                    end_dt = pd.to_datetime(interval["end"])
-                    part = df[
-                        (df[actual_time_col] >= start_dt)
-                        & (df[actual_time_col] <= end_dt)
-                    ].copy()
-                    diagnostics.append(f"时段 {index + 1}：匹配到 {len(part)} 行")
-
-                    if part.empty:
-                        continue
-
-                    part = part.sort_values(actual_time_col).reset_index(drop=True)
-                    fill_color, line_color = palette[index % len(palette)]
-                    actual_start = part[actual_time_col].min().strftime("%Y-%m-%d %H:%M:%S")
-                    actual_end = part[actual_time_col].max().strftime("%Y-%m-%d %H:%M:%S")
-                    run_value = interval.get("run_sec", "0")
-                    stop_value = interval.get("stop_sec", "-")
-                    
-                    if run_value in ("0", "0.0"):
-                        config_str = "多频集速没有运行"
-                    else:
-                        config_str = f"多频集速运行{run_value}s/停止{stop_value}s"
-
-                    # 动态判断阈值前缀文本（阈值转为整型）
-                    if threshold is not None:
-                        threshold_int = int(threshold)
-                        time_prefix = f"负荷≥{threshold_int}，机组实际运行时间"
-                    else:
-                        time_prefix = "机组实际运行时间"
-
-                    description = f"{config_str} ({time_prefix} {actual_start} ~ {actual_end})"
-
-                    plotted_periods.append({
-                        "data": part,
-                        "fill_color": fill_color,
-                        "line_color": line_color,
-                        "description": description,
-                    })
-                    periods_detailed_info.append({
-                        "text": f"监测数据时间段 {index + 1}：{description}",
-                        "color": fill_color
-                    })
-
-                st.info("🔍 各时段数据检索诊断：" + " | ".join(diagnostics))
-
-                if not plotted_periods:
-                    st.warning("指定时间段和负荷阈值下均未检索到有效数据。")
-                    st.session_state.plotted_fig_bytes = None
-                    st.session_state.plotted_title = ""
-                    st.session_state.plotted_threshold = "全部"
-                    st.session_state.plotted_periods_info = []
-                else:
-                    fig, ax1 = plt.subplots(figsize=(16, 8))
-                    ax2 = ax1.twinx()
-
-                    all_x_labels = []
-                    cursor = 0
-
-                    for period in plotted_periods:
-                        part = period["data"]
-                        count = len(part)
-                        x_values = list(range(cursor, cursor + count))
-                        cursor += count
-                        all_x_labels.extend(
-                            part[actual_time_col].dt.strftime("%m-%d %H:%M:%S").tolist()
-                        )
-
-                        ax1.fill_between(
-                            x_values,
-                            part[actual_load_col].to_numpy(),
-                            color=period["fill_color"],
-                            alpha=0.50,
-                            label=f"负荷 {period['description']}",
-                        )
-                        ax1.plot(
-                            x_values,
-                            part[actual_load_col].to_numpy(),
-                            color=period["fill_color"],
-                            linewidth=0.8,
-                            alpha=0.9,
-                        )
-                        ax2.plot(
-                            x_values,
-                            part[actual_pressure_col].to_numpy(),
-                            color=period["line_color"],
-                            linewidth=1.5,
-                            label=f"压差 {period['description']}",
-                        )
-
-                    ax1.set_xlabel("运行时间段", fontsize=12)
-                    ax1.set_ylabel(f"负荷（{actual_load_col}）", fontsize=12, color="black")
-                    ax2.set_ylabel(f"压差（{actual_pressure_col}）", fontsize=12, color="black")
-
-                    # 取消负荷网格线
-                    ax1.grid(False)
-                    
-                    # 开启右纵轴（压差轴）的网格线（横线），步长固定为 200
-                    ax2.yaxis.set_major_locator(ticker.MultipleLocator(200))
-                    ax2.grid(True, linestyle="--", alpha=0.5, color="gray")
-
-                    max_xticks = 12
-                    step = max(1, len(all_x_labels) // max_xticks)
-                    tick_positions = list(range(0, len(all_x_labels), step))
-                    tick_labels = [all_x_labels[i] for i in tick_positions]
-
-                    ax1.set_xticks(tick_positions)
-                    ax1.set_xticklabels(tick_labels, rotation=30, ha="right")
-                    ax1.tick_params(axis="x", labelsize=10)
-
-                    lines1, labels1 = ax1.get_legend_handles_labels()
-                    lines2, labels2 = ax2.get_legend_handles_labels()
-                    
-                    combined_lines = lines1 + lines2
-                    combined_labels = labels1 + labels2
-
-                    ax1.legend(
-                        combined_lines,
-                        combined_labels,
-                        loc="upper center",
-                        bbox_to_anchor=(0.5, -0.18),
-                        ncol=2,
-                        fontsize=10,
-                        frameon=True,
-                    )
-
-                    fig.tight_layout()
-
-                    # 图表标题中的阈值显示为整型
-                    if threshold is not None:
-                        chart_title_threshold = f"≥ {int(threshold)}"
-                    else:
-                        chart_title_threshold = "全部"
-                    chart_title = f"机组负荷/压差对比趋势图（最低负荷 {chart_title_threshold}）"
-                    plt.title(chart_title, fontsize=14, pad=20)
-
-                    import io
-                    buf = io.BytesIO()
-                    fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
-                    buf.seek(0)
-                    st.session_state.plotted_fig_bytes = buf.getvalue()
-                    st.session_state.plotted_title = chart_title
-                    st.session_state.plotted_threshold = chart_title_threshold
-                    st.session_state.plotted_periods_info = periods_detailed_info
-                    plt.close(fig)
-                    # 将生成的 PNG 与标题、时段说明一并永久保存到 R2 历史目录。
-                    chart_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
-                    chart_png_name = f"{chart_id}.png"
-                    chart_meta_name = f"{chart_id}.json"
-                    chart_png_path = os.path.join(CHART_HISTORY_DIR, chart_png_name)
-                    chart_meta_path = os.path.join(CHART_HISTORY_DIR, chart_meta_name)
-                    with open(chart_png_path, "wb") as chart_file:
-                        chart_file.write(st.session_state.plotted_fig_bytes)
-                    chart_meta = {
-                        "id": chart_id,
-                        "title": chart_title,
-                        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "png": chart_png_name,
-                        "periods_info": periods_detailed_info,
-                        "threshold": chart_title_threshold,
-                    }
-                    with open(chart_meta_path, "w", encoding="utf-8") as meta_file:
-                        json.dump(chart_meta, meta_file, ensure_ascii=False, indent=2)
-                    if _get_r2_client() is not None:
-                        png_ok = r2_upload_file(chart_png_path)
-                        meta_ok = r2_upload_file(chart_meta_path)
-                        if png_ok and meta_ok:
-                            st.success("多时段对比趋势图生成成功，并已保存到 Cloudflare R2 历史图库！")
-                        else:
-                            st.warning("趋势图已生成并保存在当前运行环境，但上传到 R2 未完全成功，请检查 R2 配置。")
-                    else:
-                        st.success("多时段对比趋势图生成成功！（尚未连接 R2，历史图片暂存在当前运行环境）")
-
             except Exception as e:
-                if fig is not None:
-                    plt.close(fig)
-                st.error(f"绘图过程中发生错误：{e}")
-
-# ============================================================
-# 9. 历史图片库与渲染/下载区域
-# ============================================================
-
-with st.expander("🗂️ 历史趋势图图库（可重新查看此前生成的图片）", expanded=False):
-    chart_meta_paths = sorted(Path(CHART_HISTORY_DIR).glob("*.json"), reverse=True)
-    if not chart_meta_paths:
-        st.info("目前还没有保存的历史趋势图。生成趋势图后会自动加入图库。")
-    else:
-        for meta_path in chart_meta_paths:
-            try:
-                with open(meta_path, "r", encoding="utf-8") as meta_file:
-                    meta = json.load(meta_file)
-                title_text = str(meta.get("title", meta_path.stem))
-                created_text = str(meta.get("created_at", "时间未知"))
-                row1, row2 = st.columns([5, 1])
-                with row1:
-                    st.write(f"**{title_text}**")
-                    st.caption(created_text)
-                with row2:
-                    if st.button("查看图片", key=f"view_chart_{meta_path.stem}", use_container_width=True):
-                        png_path = Path(CHART_HISTORY_DIR) / str(meta.get("png", ""))
-                        if png_path.is_file():
-                            st.session_state.plotted_fig_bytes = png_path.read_bytes()
-                            st.session_state.plotted_title = title_text
-                            st.session_state.plotted_threshold = str(meta.get("threshold", "全部"))
-                            st.session_state.plotted_periods_info = meta.get("periods_info", [])
-                            st.rerun()
-                        else:
-                            st.error("找不到对应的 PNG 文件，可能历史文件尚未同步完整。")
-            except Exception as exc:
-                st.warning(f"读取历史图片记录失败：{meta_path.name}，{exc}")
-
-if st.session_state.plotted_fig_bytes:
-    st.markdown("---")
-    st.subheader("📊 生成的对比趋势图预览")
-    st.image(st.session_state.plotted_fig_bytes, use_container_width=True)
-
-    with st.container(border=True):
-        saved_threshold = str(st.session_state.get("plotted_threshold", "全部"))
-        current_threshold_str = f"负荷≥{saved_threshold[2:]}" if saved_threshold.startswith("≥ ") else ("全部负荷" if saved_threshold == "全部" else saved_threshold)
-        st.markdown(f"📋 **各时段详细起止与配置说明（{current_threshold_str}）**", unsafe_allow_html=True)
-        
-        st.markdown(
-            "<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 12px; text-align: center;'>"
-            "<span style='color: #d93838; font-weight: bold; font-size: 16px;'>💡 提示：</span>"
-            "<span style='font-weight: bold; font-size: 15px; color: #1f1f1f;'>面积图代表负荷，折线图代表压差</span>"
-            "</div>",
-            unsafe_allow_html=True
-        )
-        
-        for item in st.session_state.plotted_periods_info:
-            color = item.get("color", "#31333F")
-            text = item.get("text", "")
-            st.markdown(
-                f"<div style='display: flex; align-items: center; margin-bottom: 6px;'>"
-                f"<span style='display: inline-block; width: 14px; height: 14px; background-color: {color}; margin-right: 8px; border-radius: 2px;'></span>"
-                f"<span style='font-size: 15px; color: #31333F;'>{text}</span>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-
-    st.download_button(
-        label="⬇️ 下载趋势图 PNG",
-        data=st.session_state.plotted_fig_bytes,
-        file_name="unit_load_pressure_comparison.png",
-        mime="image/png",
-        type="primary"
-    )
+                st.error(f"时间添加失败：{e}")

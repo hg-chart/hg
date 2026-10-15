@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据多文件多时段汇总对比分析系统（Cloudflare R2 云端持久化版）"""
+"""设备运行数据多文件多时段汇总对比分析系统"""
 
 import os
-import io
 import json
 import shutil
 import logging
@@ -17,15 +16,8 @@ from matplotlib import font_manager, ticker
 import boto3
 
 # ============================================================
-# 0. Cloudflare R2 云端存储初始化配置
+# 0. Cloudflare R2 云端存储底层连接（完全不改变原有UI与作图）
 # ============================================================
-# 请在 Streamlit 社区后台的 Secrets 中配置：
-# [r2]
-# access_key_id = "..."
-# secret_access_key = "..."
-# endpoint = "https://<account_id>.r2.cloudflarestorage.com"
-# bucket_name = "..."
-
 try:
     R2_ACCESS_KEY = st.secrets["r2"]["access_key_id"]
     R2_SECRET_KEY = st.secrets["r2"]["secret_access_key"]
@@ -40,9 +32,8 @@ try:
         region_name="auto",
     )
     USE_R2 = True
-except Exception as e:
+except Exception:
     USE_R2 = False
-    logging.warning("未检测到 Cloudflare R2 配置，将退化为本地临时存储模式: %s", e)
 
 
 # ============================================================
@@ -105,13 +96,16 @@ st.markdown("---")
 
 
 # ============================================================
-# 2. 文件库和历史时段方案（对接 Cloudflare R2 持久化）
+# 2. 文件库和历史时段方案（增加回收站支持 & Cloudflare R2 同步）
 # ============================================================
 
 VAULT_DIR = "uploaded_vault"
 FILE_TRASH_DIR = "file_trash_vault"
 os.makedirs(VAULT_DIR, exist_ok=True)
 os.makedirs(FILE_TRASH_DIR, exist_ok=True)
+
+TEMPLATES_FILE = os.path.join(VAULT_DIR, "templates_vault.json")
+TRASH_FILE = os.path.join(VAULT_DIR, "trash_vault.json")
 
 TEMPLATES_KEY = "vault/templates_vault.json"
 TRASH_KEY = "vault/trash_vault.json"
@@ -131,6 +125,7 @@ def default_templates():
 
 @st.cache_resource
 def load_persistent_templates():
+    # 优先从 Cloudflare R2 读取
     if USE_R2:
         try:
             response = s3_client.get_object(Bucket=R2_BUCKET, Key=TEMPLATES_KEY)
@@ -144,12 +139,11 @@ def load_persistent_templates():
                     idx += 1
                 return normalized_data
         except Exception:
-            pass  
-            
-    local_file = os.path.join(VAULT_DIR, "templates_vault.json")
-    if os.path.exists(local_file):
+            pass
+
+    if os.path.exists(TEMPLATES_FILE):
         try:
-            with open(local_file, "r", encoding="utf-8") as file:
+            with open(TEMPLATES_FILE, "r", encoding="utf-8") as file:
                 data = json.load(file)
             if isinstance(data, dict):
                 normalized_data = {}
@@ -166,11 +160,11 @@ def load_persistent_templates():
 
 def save_persistent_templates(templates):
     try:
-        local_file = os.path.join(VAULT_DIR, "templates_vault.json")
-        with open(local_file, "w", encoding="utf-8") as file:
+        with open(TEMPLATES_FILE, "w", encoding="utf-8") as file:
             json.dump(templates, file, ensure_ascii=False, indent=4)
+        # 同步备份到 Cloudflare R2
         if USE_R2:
-            s3_client.upload_file(local_file, R2_BUCKET, TEMPLATES_KEY)
+            s3_client.upload_file(TEMPLATES_FILE, R2_BUCKET, TEMPLATES_KEY)
         return True
     except Exception as exc:
         st.error(f"保存时段方案失败：{exc}")
@@ -186,11 +180,10 @@ def load_trash_bin():
                 return data
         except Exception:
             pass
-            
-    local_trash = os.path.join(VAULT_DIR, "trash_vault.json")
-    if os.path.exists(local_trash):
+
+    if os.path.exists(TRASH_FILE):
         try:
-            with open(local_trash, "r", encoding="utf-8") as file:
+            with open(TRASH_FILE, "r", encoding="utf-8") as file:
                 data = json.load(file)
             if isinstance(data, dict):
                 return data
@@ -201,11 +194,10 @@ def load_trash_bin():
 
 def save_trash_bin(trash):
     try:
-        local_trash = os.path.join(VAULT_DIR, "trash_vault.json")
-        with open(local_trash, "w", encoding="utf-8") as file:
+        with open(TRASH_FILE, "w", encoding="utf-8") as file:
             json.dump(trash, file, ensure_ascii=False, indent=4)
         if USE_R2:
-            s3_client.upload_file(local_trash, R2_BUCKET, TRASH_KEY)
+            s3_client.upload_file(TRASH_FILE, R2_BUCKET, TRASH_KEY)
         return True
     except Exception:
         return False
@@ -232,7 +224,7 @@ if not st.session_state.intervals:
 
 
 # ============================================================
-# 3. 上传及选择数据文件（云端同步拉取与保存）
+# 3. 上传及选择数据文件（增加从 Cloudflare R2 自动拉取与同步）
 # ============================================================
 
 if USE_R2:
@@ -289,12 +281,13 @@ if uploaded_files:
         target = os.path.join(VAULT_DIR, safe_name)
         with open(target, "wb") as file:
             file.write(uploaded_file.getbuffer())
+        # 同步上传到 Cloudflare R2
         if USE_R2:
             try:
                 s3_client.upload_file(target, R2_BUCKET, f"vault_files/{safe_name}")
             except Exception:
                 pass
-    st.success("文件已成功保存到当前运行环境及云端存储桶。")
+    st.success("文件已成功保存到当前运行环境的文件库及 Cloudflare 存储桶。")
 
 existing_files = sorted(
     name for name in os.listdir(VAULT_DIR)
@@ -784,7 +777,7 @@ st.markdown("---")
 
 
 # ============================================================
-# 8. 生成多时段趋势图
+# 8. 生成多时段趋势图（完全保留你原本的作图逻辑与规则）
 # ============================================================
 
 if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
@@ -892,9 +885,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
 
                 if not plotted_periods:
                     st.warning("指定时间段和负荷阈值下均未检索到有效数据。")
-                    st.session_state.plotted_fig_bytes = None
-                    st.session_state.plotted_title = ""
-                    st.session_state.plotted_periods_info = []
                 else:
                     fig, ax1 = plt.subplots(figsize=(16, 8))
                     ax2 = ax1.twinx()
@@ -938,7 +928,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax2.set_ylabel(f"压差（{actual_pressure_col}）", fontsize=12, color="black")
                     ax1.grid(True, linestyle="--", alpha=0.3)
 
-                    # X 轴稀疏化显示标签
                     total_pts = cursor
                     if total_pts > 0:
                         max_ticks = 15
@@ -948,7 +937,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                         ax1.set_xticks(tick_positions)
                         ax1.set_xticklabels(tick_labels, rotation=30, ha="right", fontsize=9)
 
-                    # 图例合并
                     lines_1, labels_1 = ax1.get_legend_handles_labels()
                     lines_2, labels_2 = ax2.get_legend_handles_labels()
                     ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc="upper left", fontsize=10)
@@ -957,38 +945,8 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax1.set_title(title_str, fontsize=14, pad=20)
                     plt.tight_layout()
 
-                    # 保存到内存字节，以便后续展示
-                    buf = io.BytesIO()
-                    fig.savefig(buf, format="png", dpi=150)
-                    buf.seek(0)
-                    st.session_state.plotted_fig_bytes = buf.getvalue()
-                    st.session_state.plotted_title = title_str
-                    st.session_state.plotted_periods_info = periods_detailed_info
-
                     st.pyplot(fig)
                     plt.close(fig)
 
             except Exception as e:
                 st.error(f"绘图过程中发生错误：{e}")
-
-# 如果已有生成的图表，直接在页面展示并提供云端保存按钮
-if st.session_state.plotted_fig_bytes:
-    st.markdown("---")
-    st.subheader("5. 分析结果与图表持久化")
-    st.image(st.session_state.plotted_fig_bytes, caption=st.session_state.plotted_title, use_container_width=True)
-    
-    if st.button("💾 将当前分析图表保存到 Cloudflare R2 存储桶"):
-        if USE_R2:
-            try:
-                img_name = f"charts/analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                s3_client.put_object(
-                    Bucket=R2_BUCKET,
-                    Key=img_name,
-                    Body=st.session_state.plotted_fig_bytes,
-                    ContentType="image/png"
-                )
-                st.success(f"图表已成功保存至 Cloudflare R2 存储桶，路径：{img_name}")
-            except Exception as e:
-                st.error(f"保存图表到 Cloudflare 失败：{e}")
-        else:
-            st.warning("未启用 Cloudflare R2，无法保存到云端。")

@@ -12,7 +12,7 @@ import streamlit as st
 import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib import font_manager, ticker
+from matplotlib import font_manager
 
 
 # ============================================================
@@ -368,7 +368,7 @@ if not columns:
 
 
 # ============================================================
-# 6. 数据列和负荷过滤
+# 6. 数据列和负荷过滤（已彻底修复默认列误选漏洞）
 # ============================================================
 
 st.subheader("2. 数据列选择配置")
@@ -378,12 +378,19 @@ default_load_index = min(1, len(columns) - 1)
 if "W3.UNIT1.10DEHDCSAI03" in columns:
     default_load_index = columns.index("W3.UNIT1.10DEHDCSAI03")
 
+# 【绝对安全防错】：自动智能锁定正确的 10CP201F 压差测点，绝不盲目取 index=2 选错列
+default_pressure_index = min(2, len(columns) - 1)
+for i, c in enumerate(columns):
+    if "10CP201F" in c or "AHTE10CP201F" in c:
+        default_pressure_index = i
+        break
+
 with col1:
     time_col = st.selectbox("横坐标轴（时间列）", columns, index=0)
 with col2:
     load_col = st.selectbox("负荷左纵轴", columns, index=default_load_index)
 with col3:
-    pressure_col = st.selectbox("压差右纵轴", columns, index=min(2, len(columns) - 1))
+    pressure_col = st.selectbox("压差右纵轴", columns, index=default_pressure_index)
 
 st.subheader("3. 负荷过滤配置（可选）")
 threshold_text = st.text_input("负荷下限阈值（留空则使用全部负荷数据）", value="")
@@ -402,7 +409,7 @@ if threshold_text.strip():
 # 7. 机组运行数据时间段选择
 # ============================================================
 
-st.markdown("### 4. 机组运行数据时间段选择 <span style='color:red; font-size:18px;'>（必选）</span>", unsafe_allow_html=True)
+st.subheader("4. 机组运行数据时间段选择")
 
 template_options = {}
 for name, intervals_list in st.session_state.saved_templates.items():
@@ -710,15 +717,10 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
             try:
                 df = df_raw.copy()
 
-                rename_map = {
-                    col: COLUMN_ALIASES[col]
-                    for col in df.columns
-                    if col in COLUMN_ALIASES
-                }
-                df = df.rename(columns=COLUMN_ALIASES)
-                actual_time_col = rename_map.get(time_col, time_col)
-                actual_load_col = rename_map.get(load_col, load_col)
-                actual_pressure_col = rename_map.get(pressure_col, pressure_col)
+                # 根据下拉框实际选择的列名（pressure_col）直接作为压差源数据
+                actual_time_col = time_col
+                actual_load_col = load_col
+                actual_pressure_col = pressure_col
 
                 required = [actual_time_col, actual_load_col, actual_pressure_col]
                 missing = [col for col in required if col not in df.columns]
@@ -836,42 +838,9 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax1.set_ylabel(f"负荷（{actual_load_col}）", fontsize=12, color="black")
                     ax2.set_ylabel(f"压差（{actual_pressure_col}）", fontsize=12, color="black")
 
-                    # 取消默认网格线
+                    # 完全采用函数默认缩放行为，取消强制网格线
                     ax1.grid(False)
                     ax2.grid(False)
-
-                    # ============================================================
-                    # 【核心彻底修正】：右纵轴上限绝对不虚高，精准贴合真实最大值 p_max！
-                    # ============================================================
-                    all_pressure_values = []
-                    for period in plotted_periods:
-                        all_pressure_values.extend(period["data"][actual_pressure_col].dropna().tolist())
-
-                    if all_pressure_values:
-                        p_min = min(all_pressure_values)
-                        p_max = max(all_pressure_values)
-                        
-                        st.info(f"📊 压差实际数值校验：当前时段内压差最小值 = {p_min:.2f}，最大值 = {p_max:.2f}")
-
-                        p_lower = max(0, int(p_min // 100) * 100)
-                        p_upper = float(p_max)  # 绝不盲目取整，精准贴合真实最大值！
-                        if p_lower >= p_upper:
-                            p_upper = p_lower + 100
-
-                        # 关闭自动缩放，死死锁死在 p_max 上
-                        ax2.set_autoscaley_on(False)
-                        ax2.set_ylim(p_lower, p_upper)
-
-                        span = p_upper - p_lower
-                        if span <= 500:
-                            step = 50
-                        elif span <= 1500:
-                            step = 100
-                        else:
-                            step = 200
-
-                        ax2.yaxis.set_major_locator(ticker.MultipleLocator(step))
-                        ax2.grid(True, linestyle="--", linewidth=0.7, alpha=0.5, color="grey")
 
                     total_points = len(all_x_labels)
                     tick_step = max(1, total_points // 10)

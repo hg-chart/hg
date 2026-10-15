@@ -810,12 +810,13 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                             part[actual_time_col].dt.strftime("%m-%d %H:%M:%S").tolist()
                         )
 
+                        # 【图一调整】：将“负荷”放在描述的前面，让图标后面紧接着“负荷”
                         ax1.fill_between(
                             x_values,
                             part[actual_load_col].to_numpy(),
                             color=period["fill_color"],
                             alpha=0.50,
-                            label=f"{period['description']} 负荷",
+                            label=f"负荷 {period['description']}",
                         )
                         ax1.plot(
                             x_values,
@@ -824,12 +825,13 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                             linewidth=0.8,
                             alpha=0.9,
                         )
+                        # 【图一调整】：将“压差”放在描述的前面，让图标后面紧接着“压差”
                         ax2.plot(
                             x_values,
                             part[actual_pressure_col].to_numpy(),
                             color=period["line_color"],
                             linewidth=1.5,
-                            label=f"{period['description']} 压差",
+                            label=f"压差 {period['description']}",
                         )
 
                     ax1.set_xlabel("运行时间段", fontsize=12)
@@ -840,86 +842,89 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax1.grid(False)
                     ax2.grid(False)
 
-                    # ============================================================
-                    # 采用 Matplotlib 干净的原生 Locator 机制：
-                    # 设定 200 步长，只显示偶数刻度与对应的网格参考线，彻底消除重影
-                    # ============================================================
-                    ax2.yaxis.set_major_locator(ticker.MultipleLocator(200))
-                    ax2.grid(True, linestyle="--", linewidth=0.7, alpha=0.5, color="grey")
+                    max_xticks = 12
+                    step = max(1, len(all_x_labels) // max_xticks)
+                    tick_positions = list(range(0, len(all_x_labels), step))
+                    tick_labels = [all_x_labels[i] for i in tick_positions]
 
-                    total_points = len(all_x_labels)
-                    tick_step = max(1, total_points // 10)
-                    tick_positions = list(range(0, total_points, tick_step))
                     ax1.set_xticks(tick_positions)
-                    ax1.set_xticklabels(
-                        [all_x_labels[i] for i in tick_positions],
-                        rotation=30,
-                        ha="right",
-                    )
+                    ax1.set_xticklabels(tick_labels, rotation=30, ha="right")
+                    ax1.tick_params(axis="x", labelsize=10)
 
-                    if threshold is not None:
-                        threshold_display = (
-                            str(int(threshold)) if threshold.is_integer() else str(threshold)
-                        )
-                        title = f"机组负荷/压差对比趋势图（最低负荷 ≥ {threshold_display}）"
-                    else:
-                        title = "机组负荷/压差对比趋势图"
-
-                    ax1.set_title(title, fontsize=15, pad=16)
-
-                    handles1, labels1 = ax1.get_legend_handles_labels()
-                    handles2, labels2 = ax2.get_legend_handles_labels()
-                    ax1.legend(
-                        handles1 + handles2,
-                        labels1 + labels2,
-                        loc="upper center",
-                        bbox_to_anchor=(0.5, -0.23),
-                        fontsize=7,
-                        ncol=2,
-                        framealpha=0.9,
-                    )
-
-                    fig.subplots_adjust(bottom=0.32, top=0.90, left=0.09, right=0.91)
+                    lines1, labels1 = ax1.get_legend_handles_labels()
+                    lines2, labels2 = ax2.get_legend_handles_labels()
                     
-                    import io
-                    image_buffer = io.BytesIO()
-                    fig.savefig(
-                        image_buffer,
-                        format="png",
-                        dpi=180,
-                        bbox_inches="tight",
-                        facecolor="white",
-                    )
-                    st.session_state.plotted_fig_bytes = image_buffer.getvalue()
-                    st.session_state.plotted_title = title
-                    st.session_state.plotted_periods_info = periods_detailed_info
+                    # 左右两栏交替排列图例
+                    combined_lines = []
+                    combined_labels = []
+                    max_len = max(len(lines1), len(lines2))
+                    for i in range(max_len):
+                        if i < len(lines1):
+                            combined_lines.append(lines1[i])
+                            combined_labels.append(labels1[i])
+                        if i < len(lines2):
+                            combined_lines.append(lines2[i])
+                            combined_labels.append(labels2[i])
 
-            except Exception as exc:
-                st.error(f"计算或绘图过程中发生错误：{exc}")
-            finally:
+                    ax1.legend(
+                        combined_lines,
+                        combined_labels,
+                        loc="upper center",
+                        bbox_to_anchor=(0.5, -0.18),
+                        ncol=2,
+                        fontsize=10,
+                        frameon=True,
+                    )
+
+                    fig.tight_layout()
+
+                    chart_title = f"机组负荷/压差对比趋势图（最低负荷 ≥ {threshold if threshold is not None else '全部'}）"
+                    plt.title(chart_title, fontsize=14, pad=20)
+
+                    import io
+                    buf = io.BytesIO()
+                    fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
+                    buf.seek(0)
+                    st.session_state.plotted_fig_bytes = buf.getvalue()
+                    st.session_state.plotted_title = chart_title
+                    st.session_state.plotted_periods_info = periods_detailed_info
+                    plt.close(fig)
+                    st.success("多时段对比趋势图生成成功！")
+
+            except Exception as e:
                 if fig is not None:
                     plt.close(fig)
+                st.error(f"绘图过程中发生错误：{e}")
 
-if st.session_state.plotted_fig_bytes is not None and st.session_state.intervals:
-    st.success("图表生成成功！")
-    st.image(st.session_state.plotted_fig_bytes, caption=st.session_state.plotted_title, use_container_width=True)
-    
+# ============================================================
+# 9. 渲染与下载区域
+# ============================================================
+
+if st.session_state.plotted_fig_bytes:
+    st.markdown("---")
+    st.subheader("📊 生成的对比趋势图预览")
+    st.image(st.session_state.plotted_fig_bytes, use_container_width=True)
+
     with st.container(border=True):
-        st.markdown("📋 **【查看专用】各时段详细起止与配置说明**（下载图片时不会包含此段文字）：")
-        for info_item in st.session_state.plotted_periods_info:
-            color_hex = info_item["color"]
-            text_content = info_item["text"]
+        st.markdown("📋 **【查看专用】各时段详细起止与配置说明** <span style='color:gray; font-size:12px;'>（下载图片时不会包含此段文字）</span>", unsafe_allow_html=True)
+        # 【图二调整】：在上面一段话的下面新增一行字
+        st.markdown("面积图代表负荷，折线图代表压差")
+        
+        for item in st.session_state.plotted_periods_info:
+            color = item.get("color", "#31333F")
+            text = item.get("text", "")
             st.markdown(
                 f"<div style='display: flex; align-items: center; margin-bottom: 6px;'>"
-                f"<span style='display: inline-block; width: 16px; height: 16px; background-color: {color_hex}; margin-right: 8px; border-radius: 3px; border: 1px solid #ccc;'></span>"
-                f"<span style='font-size: 15px;'>{text_content}</span>"
+                f"<span style='display: inline-block; width: 14px; height: 14px; background-color: {color}; margin-right: 8px; border-radius: 2px;'></span>"
+                f"<span style='font-size: 15px; color: #31333F;'>{text}</span>"
                 f"</div>",
                 unsafe_allow_html=True
             )
 
     st.download_button(
-        "⬇️ 下载趋势图 PNG",
+        label="⬇️ 下载趋势图 PNG",
         data=st.session_state.plotted_fig_bytes,
-        file_name="设备运行数据多时段对比趋势图.png",
+        file_name="unit_load_pressure_comparison.png",
         mime="image/png",
+        type="primary"
     )

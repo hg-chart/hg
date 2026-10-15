@@ -435,9 +435,9 @@ if "W3.UNIT1.10DEHDCSAI03" in columns:
 with col1:
     time_col = st.selectbox("横坐标轴（时间列）", columns, index=0)
 with col2:
-    load_col = st.selectbox("负荷左纵轴", columns, index=default_load_index)
+    load_col = st.selectbox("负荷左纵轴数据来源", columns, index=default_load_index)
 with col3:
-    pressure_col = st.selectbox("压差右纵轴", columns, index=min(2, len(columns) - 1))
+    pressure_col = st.selectbox("压差右纵轴数据来源", columns, index=min(2, len(columns) - 1))
 
 st.subheader("3. 负荷过滤配置（可选）")
 threshold_text = st.text_input("负荷下限阈值（留空则使用全部负荷数据）", value="")

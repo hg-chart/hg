@@ -435,11 +435,18 @@ if threshold_text.strip():
 st.markdown("### 4. 机组运行数据时间段选择 <span style='color:red; font-size:18px;'>（必选）</span>", unsafe_allow_html=True)
 
 template_options = {}
+# 用于存储格式化标签（含年月日范围）与原始方案名的映射
+formatted_scheme_options = {}
+
 for name, intervals_list in st.session_state.saved_templates.items():
     if intervals_list and isinstance(intervals_list, list):
-        first_start = intervals_list[0].get("start", "")
-        last_end = intervals_list[-1].get("end", "")
-        label = f"{name} ({first_start} ~ {last_end})"
+        # 提取年月日（去掉时分秒）
+        try:
+            first_start_date = str(intervals_list[0].get("start", "")).split()[0]
+            last_end_date = str(intervals_list[-1].get("end", "")).split()[0]
+            label = f"{name} ({first_start_date} ~ {last_end_date})"
+        except Exception:
+            label = f"{name} (时段解析异常)"
     else:
         label = f"{name} (无有效时段)"
     template_options[label] = name
@@ -457,7 +464,7 @@ if template_options:
                 st.session_state.intervals = [
                     dict(item) for item in st.session_state.saved_templates[actual_key]
                 ]
-                st.session_state["current_scheme_name"] = actual_key  # 记录当前选中的方案名
+                st.session_state["current_scheme_name"] = opt_label  # 记录带有年月日的方案显示标签
                 st.success(f"已成功加载：{actual_key}")
                 st.rerun()
         with sc3:
@@ -570,7 +577,12 @@ if st.session_state.intervals:
                 st.session_state.saved_templates[new_name] = [
                     dict(item) for item in st.session_state.intervals
                 ]
-                st.session_state["current_scheme_name"] = new_name
+                
+                # 生成带年月日的标签
+                f_date = st.session_state.intervals[0].get("start", "").split()[0]
+                l_date = st.session_state.intervals[-1].get("end", "").split()[0]
+                st.session_state["current_scheme_name"] = f"{new_name} ({f_date} ~ {l_date})"
+                
                 if save_persistent_templates(st.session_state.saved_templates):
                     st.success(f"已成功保存为“{new_name}”！")
                     st.rerun()
@@ -987,27 +999,29 @@ if st.session_state.plotted_fig_bytes:
                 st.error("Cloudflare R2 尚未连接，无法保存。")
             else:
                 try:
-                    # 自动获取当前方案名称（若未加载则默认为“默认时间段方案”）
-                    scheme_name = st.session_state.get("current_scheme_name", "默认时间段方案")
+                    # 优先获取当前带年月日范围的方案名称，若无则取当前已加载的时段计算一个
+                    scheme_name = st.session_state.get("current_scheme_name", "")
+                    if not scheme_name and st.session_state.intervals:
+                        f_date = str(st.session_state.intervals[0].get("start", "")).split()[0]
+                        l_date = str(st.session_state.intervals[-1].get("end", "")).split()[0]
+                        scheme_name = f"监测数据时间段 ({f_date} ~ {l_date})"
+                    elif not scheme_name:
+                        scheme_name = "未命名时间段方案"
                     
-                    # 提炼负荷标签
+                    # 按照负荷标签自动分类（例如：负荷大于等于240命名为 "负荷_240" 或 "全部负荷"）
                     threshold_label = f"负荷_{int(threshold)}" if threshold is not None else "全部负荷"
                     
                     time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
                     chart_filename = f"{threshold_label}_{time_str}.png"
                     
-                    # 按方案名称自动建立本地子目录归类
-                    sub_dir = os.path.join(CHART_HISTORY_DIR, scheme_name)
-                    os.makedirs(sub_dir, exist_ok=True)
-                    chart_local_path = os.path.join(sub_dir, chart_filename)
-                    
+                    # 上传到 R2，路径结构：chart_history/时间段方案名称/负荷标签_时间.png
+                    chart_local_path = os.path.join(CHART_HISTORY_DIR, chart_filename)
                     with open(chart_local_path, "wb") as img_file:
                         img_file.write(st.session_state.plotted_fig_bytes)
                     
-                    # 上传到 R2，路径结构：chart_history/方案名/负荷标签_时间.png
                     success = r2_storage.r2_upload_file(chart_local_path, key=f"chart_history/{scheme_name}/{chart_filename}")
                     if success:
-                        st.success(f"图片已成功自动归类并同步至 Cloudflare R2！\n📁 云端路径：`chart_history/{scheme_name}/{chart_filename}`")
+                        st.success(f"图片已成功归类保存至 R2！\n📁 分类目录：`{scheme_name}`\n🏷️ 负荷标签：`{threshold_label}`")
                     else:
                         st.error("同步到 Cloudflare R2 失败，请检查网络或配置。")
                 except Exception as e:
@@ -1032,28 +1046,30 @@ if r2_storage._get_r2_client() is not None:
             schemes_dict = {}
             for k in chart_keys:
                 parts = k.split("/")
+                # 路径格式: device-monitor/chart_history/时间段方案名(含年月日)/负荷标签_时间.png
                 if len(parts) >= 3:
-                    scheme = parts[-2]  # 大类：时间段方案名
-                    filename = parts[-1]  # 文件名
+                    scheme = parts[-2]  # 获取时间段方案大类名称
+                    filename = parts[-1]  # 获取文件名
                     if scheme not in schemes_dict:
                         schemes_dict[scheme] = []
                     schemes_dict[scheme].append((filename, k))
             
-            # 第一步：选择大类（时间段方案）
+            # 第一步：选择时间段方案大类（直接展示形如 "监测数据时间段1 (2026-08-01 ~ 2026-10-14)" 的名称）
             selected_scheme = st.selectbox("📁 选择时间段方案大类", list(schemes_dict.keys()))
             
             if selected_scheme:
                 files_in_scheme = schemes_dict[selected_scheme]
                 
-                # 提取该方案下的所有负荷标签
+                # 提取该方案下的所有负荷标签选项（如 "负荷_240", "全部负荷" 等）
                 load_tags = set()
                 for fname, _ in files_in_scheme:
                     tag = fname.split("_")[0] if "_" in fname else "未知"
                     load_tags.add(tag)
                 
-                # 第二步：选择负荷子类标签筛选
+                # 第二步：选择负荷标签筛选
                 selected_tag = st.selectbox("🏷️ 选择负荷标签筛选", list(load_tags))
                 
+                # 过滤出符合该负荷标签的图片
                 filtered_files = [(fname, k) for fname, k in files_in_scheme if fname.startswith(selected_tag)]
                 
                 if filtered_files:
@@ -1067,7 +1083,7 @@ if r2_storage._get_r2_client() is not None:
                             resp = client.get_object(Bucket=r2_storage._r2_bucket(), Key=target_key)
                             img_bytes = resp["Body"].read()
                             
-                            st.image(img_bytes, caption=f"云端图片：{selected_scheme} -> {selected_file_name}", use_container_width=True)
+                            st.image(img_bytes, caption=f"云端图片：{selected_scheme} ➔ 标签：{selected_tag}", use_container_width=True)
                             st.download_button(
                                 label="⬇️ 下载调用的云端图片",
                                 data=img_bytes,

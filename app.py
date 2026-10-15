@@ -841,8 +841,7 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax2.grid(False)
 
                     # ============================================================
-                    # 【核心修正】：完全基于所选时段内实际的压差数据范围来确定右纵轴刻度
-                    # 避免硬编码死数值，绝不瞎编虚高
+                    # 【正确缩进的位置】：所有时段循环绘制完毕后，统一收集和设定右纵轴范围
                     # ============================================================
                     all_pressure_values = []
                     for period in plotted_periods:
@@ -851,14 +850,14 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     if all_pressure_values:
                         p_min = min(all_pressure_values)
                         p_max = max(all_pressure_values)
-                        # 动态计算合适的上下边界（向下/向上圆整并留出适当边距）
+                        # 动态计算上下边界（向下/向上圆整并各留余量）
                         p_lower = max(0, int(p_min // 100) * 100)
                         p_upper = int((p_max // 100) + 1) * 100
                         if p_lower == p_upper:
                             p_upper += 200
                         ax2.set_ylim(p_lower, p_upper)
                         
-                        # 根据实际跨度自适应选择合理的刻度步长（如 100、200 或 500 等）
+                        # 根据实际跨度自适应选择合理的刻度步长
                         span = p_upper - p_lower
                         step = 200 if span > 1000 else 100
                         ax2.yaxis.set_major_locator(ticker.MultipleLocator(step))

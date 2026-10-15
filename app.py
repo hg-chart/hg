@@ -772,10 +772,15 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     actual_end = part[actual_time_col].max().strftime("%Y-%m-%d %H:%M:%S")
                     run_value = interval.get("run_sec", "0")
                     stop_value = interval.get("stop_sec", "-")
-                    description = (
-                        f"多频集速运行{run_value}s/停止{stop_value}s "
-                        f"(实际 {actual_start} ~ {actual_end})"
-                    )
+                    
+                    # 规则1：如果多频集速运行秒数为0或0.0，显示“多频集速没有运行”
+                    if run_value in ("0", "0.0"):
+                        config_str = "多频集速没有运行"
+                    else:
+                        config_str = f"多频集速运行{run_value}s/停止{stop_value}s"
+
+                    description = f"{config_str} (实际 {actual_start} ~ {actual_end})"
+
                     plotted_periods.append({
                         "data": part,
                         "fill_color": fill_color,
@@ -852,7 +857,7 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     lines1, labels1 = ax1.get_legend_handles_labels()
                     lines2, labels2 = ax2.get_legend_handles_labels()
                     
-                    # 【核心修改处】：让左侧全部是负荷（lines1），右侧全部是压差（lines2）
+                    # 确保左侧全部是负荷，右侧全部是压差
                     combined_lines = lines1 + lines2
                     combined_labels = labels1 + labels2
 
@@ -896,8 +901,18 @@ if st.session_state.plotted_fig_bytes:
     st.image(st.session_state.plotted_fig_bytes, use_container_width=True)
 
     with st.container(border=True):
-        st.markdown("📋 **【查看专用】各时段详细起止与配置说明** <span style='color:gray; font-size:12px;'>（下载图片时不会包含此段文字）</span>", unsafe_allow_html=True)
-        st.markdown("面积图代表负荷，折线图代表压差")
+        # 规则2：更新各时段详细起止与配置说明的标题，带上当前负荷阈值
+        current_threshold_str = f"负荷≥{threshold}" if threshold is not None else "全部负荷"
+        st.markdown(f"📋 **各时段详细起止与配置说明（{current_threshold_str}）**", unsafe_allow_html=True)
+        
+        # 规则3：让“面积图代表负荷，折线图代表压差”更加醒目
+        st.markdown(
+            "<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 12px;'>"
+            "<span style='color: #d93838; font-weight: bold; font-size: 16px;'>💡 提示：</span>"
+            "<span style='font-weight: bold; font-size: 15px; color: #1f1f1f;'>面积图代表负荷，折线图代表压差</span>"
+            "</div>",
+            unsafe_allow_html=True
+        )
         
         for item in st.session_state.plotted_periods_info:
             color = item.get("color", "#31333F")

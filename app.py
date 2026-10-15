@@ -1044,7 +1044,7 @@ if st.session_state.plotted_fig_bytes:
 # 10. 云端历史图片按标签检索与调用专区
 # ============================================================
 st.markdown("---")
-st.subheader("☁️ 云端历史图片按标签检索与调用")
+st.subheader("☁️ 云端历史对比趋势图按标签检索与调用")
 
 if r2_storage._get_r2_client() is not None:
     if st.button("🔄 刷新云端图片列表", key="refresh_chart_list"):

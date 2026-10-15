@@ -433,7 +433,7 @@ if "W3.UNIT1.10DEHDCSAI03" in columns:
     default_load_index = columns.index("W3.UNIT1.10DEHDCSAI03")
 
 with col1:
-    time_col = st.selectbox("横坐标轴（时间列）", columns, index=0)
+    time_col = st.selectbox("横坐标轴（时间列）请选择数据来源", columns, index=0)
 with col2:
     load_col = st.selectbox("左纵轴（机组负荷）请选择数据来源", columns, index=default_load_index)
 with col3:

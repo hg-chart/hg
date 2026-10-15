@@ -16,7 +16,7 @@ from matplotlib import font_manager, ticker
 import boto3
 
 # ============================================================
-# 0. Cloudflare R2 云端存储底层连接（完全不改变原有UI与作图）
+# 0. Cloudflare R2 自动云端持久化底层支持（不改变任何前端界面与作图）
 # ============================================================
 try:
     R2_ACCESS_KEY = st.secrets["r2"]["access_key_id"]
@@ -96,7 +96,7 @@ st.markdown("---")
 
 
 # ============================================================
-# 2. 文件库和历史时段方案（增加回收站支持 & Cloudflare R2 同步）
+# 2. 文件库和历史时段方案（增加回收站支持 & 自动云端同步）
 # ============================================================
 
 VAULT_DIR = "uploaded_vault"
@@ -109,6 +109,21 @@ TRASH_FILE = os.path.join(VAULT_DIR, "trash_vault.json")
 
 TEMPLATES_KEY = "vault/templates_vault.json"
 TRASH_KEY = "vault/trash_vault.json"
+
+# 启动时自动从 R2 云端同步方案和回收站文件到本地
+if USE_R2:
+    try:
+        r2_t_obj = s3_client.get_object(Bucket=R2_BUCKET, Key=TEMPLATES_KEY)
+        with open(TEMPLATES_FILE, "wb") as f:
+            f.write(r2_t_obj["Body"].read())
+    except Exception:
+        pass
+    try:
+        r2_tr_obj = s3_client.get_object(Bucket=R2_BUCKET, Key=TRASH_KEY)
+        with open(TRASH_FILE, "wb") as f:
+            f.write(r2_tr_obj["Body"].read())
+    except Exception:
+        pass
 
 
 def default_templates():
@@ -125,22 +140,6 @@ def default_templates():
 
 @st.cache_resource
 def load_persistent_templates():
-    # 优先从 Cloudflare R2 读取
-    if USE_R2:
-        try:
-            response = s3_client.get_object(Bucket=R2_BUCKET, Key=TEMPLATES_KEY)
-            data = json.loads(response["Body"].read().decode("utf-8"))
-            if isinstance(data, dict):
-                normalized_data = {}
-                idx = 1
-                for k, v in data.items():
-                    key_name = k if k.startswith("监测数据时间段") else f"监测数据时间段{idx}"
-                    normalized_data[key_name] = v
-                    idx += 1
-                return normalized_data
-        except Exception:
-            pass
-
     if os.path.exists(TEMPLATES_FILE):
         try:
             with open(TEMPLATES_FILE, "r", encoding="utf-8") as file:
@@ -162,7 +161,6 @@ def save_persistent_templates(templates):
     try:
         with open(TEMPLATES_FILE, "w", encoding="utf-8") as file:
             json.dump(templates, file, ensure_ascii=False, indent=4)
-        # 同步备份到 Cloudflare R2
         if USE_R2:
             s3_client.upload_file(TEMPLATES_FILE, R2_BUCKET, TEMPLATES_KEY)
         return True
@@ -172,15 +170,6 @@ def save_persistent_templates(templates):
 
 
 def load_trash_bin():
-    if USE_R2:
-        try:
-            response = s3_client.get_object(Bucket=R2_BUCKET, Key=TRASH_KEY)
-            data = json.loads(response["Body"].read().decode("utf-8"))
-            if isinstance(data, dict):
-                return data
-        except Exception:
-            pass
-
     if os.path.exists(TRASH_FILE):
         try:
             with open(TRASH_FILE, "r", encoding="utf-8") as file:
@@ -224,7 +213,7 @@ if not st.session_state.intervals:
 
 
 # ============================================================
-# 3. 上传及选择数据文件（增加从 Cloudflare R2 自动拉取与同步）
+# 3. 上传及选择数据文件（增加从 R2 自动同步 CSV 文件）
 # ============================================================
 
 if USE_R2:
@@ -281,13 +270,12 @@ if uploaded_files:
         target = os.path.join(VAULT_DIR, safe_name)
         with open(target, "wb") as file:
             file.write(uploaded_file.getbuffer())
-        # 同步上传到 Cloudflare R2
         if USE_R2:
             try:
                 s3_client.upload_file(target, R2_BUCKET, f"vault_files/{safe_name}")
             except Exception:
                 pass
-    st.success("文件已成功保存到当前运行环境的文件库及 Cloudflare 存储桶。")
+    st.success("文件已成功保存到当前运行环境的文件库。")
 
 existing_files = sorted(
     name for name in os.listdir(VAULT_DIR)
@@ -777,7 +765,7 @@ st.markdown("---")
 
 
 # ============================================================
-# 8. 生成多时段趋势图（完全保留你原本的作图逻辑与规则）
+# 8. 生成多时段趋势图（完全一字不改保留你原本的作图逻辑）
 # ============================================================
 
 if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
@@ -885,6 +873,9 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
 
                 if not plotted_periods:
                     st.warning("指定时间段和负荷阈值下均未检索到有效数据。")
+                    st.session_state.plotted_fig_bytes = None
+                    st.session_state.plotted_title = ""
+                    st.session_state.plotted_periods_info = []
                 else:
                     fig, ax1 = plt.subplots(figsize=(16, 8))
                     ax2 = ax1.twinx()

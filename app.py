@@ -156,7 +156,6 @@ if "trash_bin" not in st.session_state:
 if "intervals" not in st.session_state:
     st.session_state.intervals = []
 
-# 用于保存图表渲染状态，防止下载后图表消失
 if "plotted_fig_bytes" not in st.session_state:
     st.session_state.plotted_fig_bytes = None
 if "plotted_title" not in st.session_state:
@@ -164,7 +163,6 @@ if "plotted_title" not in st.session_state:
 if "plotted_periods_info" not in st.session_state:
     st.session_state.plotted_periods_info = []
 
-# 额外安全检查：如果没有选择任何时间段，立刻清空已有图表及提示状态
 if not st.session_state.intervals:
     st.session_state.plotted_fig_bytes = None
     st.session_state.plotted_title = ""
@@ -172,7 +170,7 @@ if not st.session_state.intervals:
 
 
 # ============================================================
-# 3. 上传及选择数据文件（保持页面极其干净简洁）
+# 3. 上传及选择数据文件
 # ============================================================
 
 st.subheader("1. 表格文件管理（支持上传和调用历史文件）")
@@ -183,7 +181,6 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True,
 )
 
-# 修改 Upload 按钮的 CSS 样式显示为“上传文件”
 st.markdown(
     """
     <style>
@@ -251,7 +248,7 @@ if existing_files:
     st.success(f"当前已选择 {len(active_paths)} 个文件参与分析。")
 
 # ============================================================
-# 4. 单独设置的“文件删除与回收站管理”折叠栏
+# 4. 文件删除与回收站管理
 # ============================================================
 with st.expander("🗑️ 文件删除与回收站管理（如需清理历史文件请展开）", expanded=False):
     st.write("勾选不需要的文件进行批量删除，删除后的文件可随时在下方回收站恢复：")
@@ -402,7 +399,7 @@ if threshold_text.strip():
 
 
 # ============================================================
-# 7. 机组运行数据时间段选择（统一命名与回收站）—— 带“（必选）”红字提示
+# 7. 机组运行数据时间段选择
 # ============================================================
 
 st.markdown("### 4. 机组运行数据时间段选择 <span style='color:red; font-size:18px;'>（必选）</span>", unsafe_allow_html=True)
@@ -839,24 +836,26 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax1.set_ylabel(f"负荷（{actual_load_col}）", fontsize=12, color="black")
                     ax2.set_ylabel(f"压差（{actual_pressure_col}）", fontsize=12, color="black")
 
-                    ax1.grid(True, axis="y", linestyle="-", linewidth=0.6, alpha=0.35)
-                    ax1.set_axisbelow(True)
+                    # 取消负荷网格线（把 grid 设为 False，保持图面干净）
+                    ax1.grid(False)
+                    ax2.grid(False)
 
                     # ============================================================
-                    # 动态添加压差右纵轴的标志性双数横向参考线（1200, 1400, 1600, 1800, 2000）
+                    # 仅保留压差右纵轴步长为200的横向参考线（1000, 1200, 1400, 1600, 1800, 2000...）
                     # ============================================================
                     p_min, p_max = ax2.get_ylim()
-                    marker_pressures = [1200, 1400, 1600, 1800, 2000]
+                    # 动态生成从 800 开始到 3000、步长为 200 的参考标准线集合
+                    marker_pressures = list(range(800, 4001, 200))
                     for p_val in marker_pressures:
                         if p_min <= p_val <= p_max:
                             ax2.axhline(
                                 y=p_val,
                                 color="grey",
                                 linestyle="--",
-                                linewidth=0.8,
-                                alpha=0.6
+                                linewidth=0.7,
+                                alpha=0.5
                             )
-                            # 在右侧边缘标注文字提示数值，保持适当间距避免重影
+                            # 在右侧边缘标注数值，避免拥挤重影
                             ax2.text(
                                 1.002, p_val, f" {p_val}",
                                 transform=ax2.get_yaxis_transform(),

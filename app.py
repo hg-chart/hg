@@ -14,7 +14,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import font_manager, ticker
 
-# 导入刚才创建的 Cloudflare R2 专属模块
+# 导入 Cloudflare R2 专属模块
 import r2_storage
 
 
@@ -233,6 +233,7 @@ if uploaded_files:
         target = os.path.join(VAULT_DIR, safe_name)
         with open(target, "wb") as file:
             file.write(uploaded_file.getbuffer())
+        # 同步上传到 Cloudflare R2
         if r2_storage._get_r2_client() is not None:
             r2_storage.r2_upload_file(target)
     st.success("文件已成功保存到当前运行环境的文件库并同步至 Cloudflare R2。")
@@ -926,8 +927,17 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     st.session_state.plotted_fig_bytes = buf.getvalue()
                     st.session_state.plotted_title = chart_title
                     st.session_state.plotted_periods_info = periods_detailed_info
+                    
+                    # 将生成的图表保存到本地目录并同步到 R2 存储桶
+                    chart_filename = f"chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                    chart_local_path = os.path.join(CHART_HISTORY_DIR, chart_filename)
+                    with open(chart_local_path, "wb") as img_file:
+                        img_file.write(st.session_state.plotted_fig_bytes)
+                    if r2_storage._get_r2_client() is not None:
+                        r2_storage.r2_upload_file(chart_local_path)
+
                     plt.close(fig)
-                    st.success("多时段对比趋势图生成成功！")
+                    st.success("多时段对比趋势图生成成功，并已自动同步至 Cloudflare R2！")
 
             except Exception as e:
                 if fig is not None:

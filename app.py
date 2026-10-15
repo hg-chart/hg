@@ -435,12 +435,9 @@ if threshold_text.strip():
 st.markdown("### 4. 机组运行数据时间段选择 <span style='color:red; font-size:18px;'>（必选）</span>", unsafe_allow_html=True)
 
 template_options = {}
-# 用于存储格式化标签（含年月日范围）与原始方案名的映射
-formatted_scheme_options = {}
 
 for name, intervals_list in st.session_state.saved_templates.items():
     if intervals_list and isinstance(intervals_list, list):
-        # 提取年月日（去掉时分秒）
         try:
             first_start_date = str(intervals_list[0].get("start", "")).split()[0]
             last_end_date = str(intervals_list[-1].get("end", "")).split()[0]
@@ -578,7 +575,6 @@ if st.session_state.intervals:
                     dict(item) for item in st.session_state.intervals
                 ]
                 
-                # 生成带年月日的标签
                 f_date = st.session_state.intervals[0].get("start", "").split()[0]
                 l_date = st.session_state.intervals[-1].get("end", "").split()[0]
                 st.session_state["current_scheme_name"] = f"{new_name} ({f_date} ~ {l_date})"
@@ -999,7 +995,7 @@ if st.session_state.plotted_fig_bytes:
                 st.error("Cloudflare R2 尚未连接，无法保存。")
             else:
                 try:
-                    # 优先获取当前带年月日范围的方案名称，若无则取当前已加载的时段计算一个
+                    # 获取当前带年月日的方案名称（例如：监测数据时间段1 (2026-08-01 ~ 2026-10-14)）
                     scheme_name = st.session_state.get("current_scheme_name", "")
                     if not scheme_name and st.session_state.intervals:
                         f_date = str(st.session_state.intervals[0].get("start", "")).split()[0]
@@ -1008,20 +1004,20 @@ if st.session_state.plotted_fig_bytes:
                     elif not scheme_name:
                         scheme_name = "未命名时间段方案"
                     
-                    # 按照负荷标签自动分类（例如：负荷大于等于240命名为 "负荷_240" 或 "全部负荷"）
-                    threshold_label = f"负荷_{int(threshold)}" if threshold is not None else "全部负荷"
+                    # 负荷标签（例如：负荷_240 或 负荷_全部）
+                    load_tag_str = f"负荷_{int(threshold)}" if threshold is not None else "负荷_全部"
                     
                     time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    chart_filename = f"{threshold_label}_{time_str}.png"
+                    chart_filename = f"{load_tag_str}_{time_str}.png"
                     
-                    # 上传到 R2，路径结构：chart_history/时间段方案名称/负荷标签_时间.png
                     chart_local_path = os.path.join(CHART_HISTORY_DIR, chart_filename)
                     with open(chart_local_path, "wb") as img_file:
                         img_file.write(st.session_state.plotted_fig_bytes)
                     
+                    # 规范存储路径：chart_history/方案名(含年月日范围)/负荷标签_时间.png
                     success = r2_storage.r2_upload_file(chart_local_path, key=f"chart_history/{scheme_name}/{chart_filename}")
                     if success:
-                        st.success(f"图片已成功归类保存至 R2！\n📁 分类目录：`{scheme_name}`\n🏷️ 负荷标签：`{threshold_label}`")
+                        st.success(f"图片已成功归类保存至 R2！\n📁 时间段方案：`{scheme_name}`\n🏷️ 负荷标签：`{load_tag_str}`")
                     else:
                         st.error("同步到 Cloudflare R2 失败，请检查网络或配置。")
                 except Exception as e:
@@ -1040,60 +1036,70 @@ if r2_storage._get_r2_client() is not None:
         
     all_keys = r2_storage.r2_list_keys()
     if all_keys:
+        # 筛选出属于 chart_history 目录下的 png 图片
         chart_keys = [k for k in all_keys if "chart_history/" in k and k.endswith(".png")]
         
         if chart_keys:
             schemes_dict = {}
             for k in chart_keys:
                 parts = k.split("/")
-                # 路径格式: device-monitor/chart_history/时间段方案名(含年月日)/负荷标签_时间.png
-                if len(parts) >= 3:
-                    scheme = parts[-2]  # 获取时间段方案大类名称
-                    filename = parts[-1]  # 获取文件名
+                # 预期的完整路径结构：
+                # ['device-monitor', 'chart_history', '方案名 (2026-08-01 ~ 2026-10-14)', '负荷_240_20261015_200000.png']
+                if len(parts) >= 4:
+                    scheme = parts[2]       # 正确锁定第三层：时间段方案大类名称（含年月日）
+                    filename = parts[3]     # 文件名
                     if scheme not in schemes_dict:
                         schemes_dict[scheme] = []
                     schemes_dict[scheme].append((filename, k))
             
-            # 第一步：选择时间段方案大类（直接展示形如 "监测数据时间段1 (2026-08-01 ~ 2026-10-14)" 的名称）
-            selected_scheme = st.selectbox("📁 选择时间段方案大类", list(schemes_dict.keys()))
-            
-            if selected_scheme:
-                files_in_scheme = schemes_dict[selected_scheme]
+            if schemes_dict:
+                # 第一步：选择时间段方案大类（直观展示具体名称与年月日范围）
+                selected_scheme = st.selectbox("📁 选择时间段方案大类", list(schemes_dict.keys()))
                 
-                # 提取该方案下的所有负荷标签选项（如 "负荷_240", "全部负荷" 等）
-                load_tags = set()
-                for fname, _ in files_in_scheme:
-                    tag = fname.split("_")[0] if "_" in fname else "未知"
-                    load_tags.add(tag)
-                
-                # 第二步：选择负荷标签筛选
-                selected_tag = st.selectbox("🏷️ 选择负荷标签筛选", list(load_tags))
-                
-                # 过滤出符合该负荷标签的图片
-                filtered_files = [(fname, k) for fname, k in files_in_scheme if fname.startswith(selected_tag)]
-                
-                if filtered_files:
-                    file_options = {fname: k for fname, k in filtered_files}
-                    selected_file_name = st.selectbox("📄 选择具体的历史图片文件", list(file_options.keys()))
+                if selected_scheme:
+                    files_in_scheme = schemes_dict[selected_scheme]
                     
-                    if selected_file_name:
-                        target_key = file_options[selected_file_name]
-                        client = r2_storage._get_r2_client()
-                        try:
-                            resp = client.get_object(Bucket=r2_storage._r2_bucket(), Key=target_key)
-                            img_bytes = resp["Body"].read()
-                            
-                            st.image(img_bytes, caption=f"云端图片：{selected_scheme} ➔ 标签：{selected_tag}", use_container_width=True)
-                            st.download_button(
-                                label="⬇️ 下载调用的云端图片",
-                                data=img_bytes,
-                                file_name=selected_file_name,
-                                mime="image/png"
-                            )
-                        except Exception as e:
-                            st.error(f"从云端加载图片失败：{e}")
-                else:
-                    st.info("该方案下暂无此负荷标签的图片。")
+                    # 提取该方案下的所有真实负荷标签（如 "负荷_240", "负荷_全部" 等）
+                    load_tags = set()
+                    for fname, _ in files_in_scheme:
+                        # 文件名格式如：负荷_240_20261015_200000.png -> 提取出 "负荷_240"
+                        tag_parts = fname.split("_")
+                        if len(tag_parts) >= 2:
+                            tag = f"{tag_parts[0]}_{tag_parts[1]}"
+                        else:
+                            tag = fname.split(".")[0]
+                        load_tags.add(tag)
+                    
+                    # 第二步：选择负荷标签筛选
+                    selected_tag = st.selectbox("🏷️ 选择负荷标签筛选", sorted(list(load_tags)))
+                    
+                    # 过滤出符合该负荷标签的图片
+                    filtered_files = [(fname, k) for fname, k in files_in_scheme if fname.startswith(selected_tag)]
+                    
+                    if filtered_files:
+                        file_options = {fname: k for fname, k in filtered_files}
+                        selected_file_name = st.selectbox("📄 选择具体的历史图片文件", list(file_options.keys()))
+                        
+                        if selected_file_name:
+                            target_key = file_options[selected_file_name]
+                            client = r2_storage._get_r2_client()
+                            try:
+                                resp = client.get_object(Bucket=r2_storage._r2_bucket(), Key=target_key)
+                                img_bytes = resp["Body"].read()
+                                
+                                st.image(img_bytes, caption=f"云端图片：{selected_scheme} ➔ {selected_tag}", use_container_width=True)
+                                st.download_button(
+                                    label="⬇️ 下载调用的云端图片",
+                                    data=img_bytes,
+                                    file_name=selected_file_name,
+                                    mime="image/png"
+                                )
+                            except Exception as e:
+                                st.error(f"从云端加载图片失败：{e}")
+                    else:
+                        st.info("该方案下暂无此负荷标签的图片。")
+            else:
+                st.info("未解析到有效的方案大类。")
         else:
             st.info("云端暂无保存的历史图片。")
     else:

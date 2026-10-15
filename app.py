@@ -241,6 +241,7 @@ if existing_files:
             with fc2:
                 st.text(f"📄 {name}")
 
+        # 调整按钮和提示的位置
         b_c1, b_c2 = st.columns([2, 2])
         with b_c1:
             if st.button("🗑️ 批量删除选中文件"):
@@ -259,14 +260,7 @@ if existing_files:
                     st.warning("请先勾选需要删除的文件。")
 
         with b_c2:
-            if st.button("🗑️ 清空文件库中的所有表格文件"):
-                for name in existing_files:
-                    src_path = os.path.join(VAULT_DIR, name)
-                    dst_path = os.path.join(FILE_TRASH_DIR, name)
-                    if os.path.exists(src_path):
-                        shutil.move(src_path, dst_path)
-                st.success("已将所有文件移入回收站！")
-                st.rerun()
+            st.write("") # 保持排版美观
 
         active_paths = [os.path.join(VAULT_DIR, name) for name in selected_files]
 
@@ -304,6 +298,7 @@ if not active_paths:
     st.info("请先上传或选择 CSV、Excel 数据文件。")
     st.stop()
 
+# 将“当前已选择 X 个文件参与分析。”放到原批量删除按钮的位置
 st.success(f"当前已选择 {len(active_paths)} 个文件参与分析。")
 
 

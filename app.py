@@ -841,7 +841,7 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax2.grid(False)
 
                     # ============================================================
-                    # 【严厉修正】：直接精准贴合真实最大值 p_max，绝不虚高！
+                    # 【核心彻底修正】：右纵轴上限绝对不虚高，精准贴合真实最大值 p_max！
                     # ============================================================
                     all_pressure_values = []
                     for period in plotted_periods:
@@ -854,11 +854,11 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                         st.info(f"📊 压差实际数值校验：当前时段内压差最小值 = {p_min:.2f}，最大值 = {p_max:.2f}")
 
                         p_lower = max(0, int(p_min // 100) * 100)
-                        p_upper = float(p_max)  # 精准贴合真实最大值
+                        p_upper = float(p_max)  # 绝不盲目取整，精准贴合真实最大值！
                         if p_lower >= p_upper:
                             p_upper = p_lower + 100
 
-                        # 关闭自动缩放，强制锁定
+                        # 关闭自动缩放，死死锁死在 p_max 上
                         ax2.set_autoscaley_on(False)
                         ax2.set_ylim(p_lower, p_upper)
 

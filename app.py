@@ -778,11 +778,11 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     else:
                         config_str = f"多频集速运行{run_value}s/停止{stop_value}s"
 
-                    # 动态生成前缀说明文字
+                    # 根据是否设置了阈值动态切换前缀显示
                     if threshold is not None:
                         time_prefix = f"负荷≥{threshold}，机组实际运行时间"
                     else:
-                        time_prefix = "全部负荷，机组实际运行时间"
+                        time_prefix = "机组实际运行时间"
 
                     description = f"{config_str} ({time_prefix} {actual_start} ~ {actual_end})"
 

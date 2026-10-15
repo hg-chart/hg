@@ -649,7 +649,7 @@ with st.container(border=True):
         with ec3:
             end_minute = st.number_input("分 ", min_value=0, max_value=59, value=default_end.minute, key="e_m")
         with ec4:
-            end_second = st.number_input("秒 ", min_value=0, max_value=59, value=default_end.second, key="e_s") # 修复：将 key 改为 "e_s"
+            end_second = st.number_input("秒 ", min_value=0, max_value=59, value=default_end.second, key="e_s")
 
         run_col, stop_col, btn_col = st.columns([2, 2, 1.5])
         with run_col:
@@ -778,9 +778,10 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     else:
                         config_str = f"多频集速运行{run_value}s/停止{stop_value}s"
 
-                    # 动态判断阈值前缀文本
+                    # 动态判断阈值前缀文本（阈值转为整型）
                     if threshold is not None:
-                        time_prefix = f"负荷≥{threshold}，机组实际运行时间"
+                        threshold_int = int(threshold)
+                        time_prefix = f"负荷≥{threshold_int}，机组实际运行时间"
                     else:
                         time_prefix = "机组实际运行时间"
 
@@ -877,7 +878,12 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
 
                     fig.tight_layout()
 
-                    chart_title = f"机组负荷/压差对比趋势图（最低负荷 ≥ {threshold if threshold is not None else '全部'}）"
+                    # 图表标题中的阈值显示为整型
+                    if threshold is not None:
+                        chart_title_threshold = f"≥ {int(threshold)}"
+                    else:
+                        chart_title_threshold = "全部"
+                    chart_title = f"机组负荷/压差对比趋势图（最低负荷 {chart_title_threshold}）"
                     plt.title(chart_title, fontsize=14, pad=20)
 
                     import io
@@ -905,7 +911,10 @@ if st.session_state.plotted_fig_bytes:
     st.image(st.session_state.plotted_fig_bytes, use_container_width=True)
 
     with st.container(border=True):
-        current_threshold_str = f"负荷≥{threshold}" if threshold is not None else "全部负荷"
+        if threshold is not None:
+            current_threshold_str = f"负荷≥{int(threshold)}"
+        else:
+            current_threshold_str = "全部负荷"
         st.markdown(f"📋 **各时段详细起止与配置说明（{current_threshold_str}）**", unsafe_allow_html=True)
         
         st.markdown(

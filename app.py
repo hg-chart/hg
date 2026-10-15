@@ -904,7 +904,7 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     lines1, labels1 = ax1.get_legend_handles_labels()
                     lines2, labels2 = ax2.get_legend_handles_labels()
                     
-                    combined_lines = lines1 + labels1
+                    combined_lines = lines1 + lines2
                     combined_labels = labels1 + labels2
 
                     ax1.legend(
@@ -1019,7 +1019,7 @@ if st.session_state.plotted_fig_bytes:
 
 
 # ============================================================
-# 10. 云端历史图片按标签检索与调用专区（无感知无刷新一次性选择）
+# 10. 云端历史图片按标签检索与调用专区（无感知一次性平铺显示）
 # ============================================================
 st.markdown("---")
 st.subheader("☁️ 云端历史图片按标签检索与调用")
@@ -1054,7 +1054,7 @@ if r2_storage._get_r2_client() is not None:
                     global_load_tags.add(tag)
             
             if schemes_dict:
-                # 两个下拉框平铺同时显示，无需选择第一个后再弹第二个
+                # 两个下拉框平铺同时显示
                 selected_scheme = st.selectbox(
                     "📁 选择时间段方案大类", 
                     ["-- 请选择 --"] + list(schemes_dict.keys()), 
@@ -1067,12 +1067,11 @@ if r2_storage._get_r2_client() is not None:
                     key="sel_tag"
                 )
                 
-                # 点击【🔍 查看选中的图片】一次性匹配并提交显示，避免中间出现刷新过程
+                # 点击查看按钮统一触发匹配
                 if st.button("🔍 查看选中的图片", type="primary", key="btn_view_chart"):
                     if selected_scheme == "-- 请选择 --" or selected_tag == "-- 请选择 --":
                         st.warning("请同时选择“时间段方案大类”和“负荷标签筛选”。")
                     else:
-                        # 从数据字典中调取唯一对应的图片路径
                         scheme_data = schemes_dict.get(selected_scheme, {})
                         if selected_tag in scheme_data:
                             selected_file_name, target_key = scheme_data[selected_tag]
@@ -1084,7 +1083,6 @@ if r2_storage._get_r2_client() is not None:
                             st.session_state.pop("active_chart_key", None)
                             st.info(f"在方案“{selected_scheme}”下暂未找到标签为“{selected_tag}”的图片。")
 
-                # 如果成功匹配到了选中的图片，进行渲染
                 if "active_chart_key" in st.session_state:
                     target_key = st.session_state["active_chart_key"]
                     selected_file_name = st.session_state["active_chart_name"]
@@ -1114,10 +1112,11 @@ if r2_storage._get_r2_client() is not None:
                                 with open(local_trash_path, "wb") as tf:
                                     tf.write(img_bytes)
                                 r2_storage.r2_upload_file(local_trash_path, key=f"chart_trash_vault/{selected_file_name}")
+                                # 彻底从云端原路径删除
                                 r2_storage.r2_delete_key(target_key)
                                 
                                 st.session_state.pop("active_chart_key", None)
-                                st.success("图片已成功移入云端/本地回收站！")
+                                st.success("图片已成功移入云端/本地回收站，并从云端原目录彻底清除！")
                                 st.rerun()
                     except Exception as e:
                         st.error(f"从云端加载图片失败：{e}")
@@ -1157,7 +1156,7 @@ if r2_storage._get_r2_client() is not None:
                         if os.path.exists(src_path):
                             os.remove(src_path)
                         r2_storage.r2_delete_key(f"chart_trash_vault/{t_img}")
-                        st.success(f"已彻底删除图片：{t_img}")
+                        st.success(f"已从云端彻底删除图片：{t_img}")
                         st.rerun()
 else:
     st.info("请先配置并连接 Cloudflare R2 存储桶以使用云端图片检索功能。")

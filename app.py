@@ -75,13 +75,16 @@ st.markdown("---")
 
 
 # ============================================================
-# 2. 文件库和历史时段方案（增加回收站支持）
+# 2. 文件库、历史时段方案与图片持久化库初始化
 # ============================================================
 
 VAULT_DIR = "uploaded_vault"
 FILE_TRASH_DIR = "file_trash_vault"
+IMAGE_VAULT_DIR = "saved_images"  # 用于存放生成的图片，对应 GitHub 提交目录
+
 os.makedirs(VAULT_DIR, exist_ok=True)
 os.makedirs(FILE_TRASH_DIR, exist_ok=True)
+os.makedirs(IMAGE_VAULT_DIR, exist_ok=True)
 
 TEMPLATES_FILE = os.path.join(VAULT_DIR, "templates_vault.json")
 TRASH_FILE = os.path.join(VAULT_DIR, "trash_vault.json")
@@ -693,7 +696,7 @@ st.markdown("---")
 
 
 # ============================================================
-# 8. 生成多时段趋势图
+# 8. 生成多时段趋势图并自动本地持久化（供 GitHub 保存）
 # ============================================================
 
 if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
@@ -778,7 +781,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     else:
                         config_str = f"多频集速运行{run_value}s/停止{stop_value}s"
 
-                    # 动态判断阈值前缀文本（阈值转为整型）
                     if threshold is not None:
                         threshold_int = int(threshold)
                         time_prefix = f"负荷≥{threshold_int}，机组实际运行时间"
@@ -844,105 +846,95 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                         )
 
                     ax1.set_xlabel("运行时间段", fontsize=12)
-                    ax1.set_ylabel(f"负荷（{actual_load_col}）", fontsize=12, color="black")
-                    ax2.set_ylabel(f"压差（{actual_pressure_col}）", fontsize=12, color="black")
-
-                    # 取消负荷网格线
-                    ax1.grid(False)
+                    ax1.set_ylabel(f"负荷（{load_col}）", fontsize=12, color="black")
+                    ax2.set_ylabel(f"压差（{pressure_col}）", fontsize=12, color="black")
                     
-                    # 开启右纵轴（压差轴）的网格线（横线），步长固定为 200
-                    ax2.yaxis.set_major_locator(ticker.MultipleLocator(200))
-                    ax2.grid(True, linestyle="--", alpha=0.5, color="gray")
+                    # 减少 X 轴密集标签
+                    max_ticks = 15
+                    if len(all_x_labels) > max_ticks:
+                        step = len(all_x_labels) // max_ticks
+                        ax1.set_xticks(range(0, len(all_x_labels), step))
+                        ax1.set_xticklabels([all_x_labels[i] for i in range(0, len(all_x_labels), step)], rotation=30, ha="right", fontsize=9)
+                    else:
+                        ax1.set_xticks(range(len(all_x_labels)))
+                        ax1.set_xticklabels(all_x_labels, rotation=30, ha="right", fontsize=9)
 
-                    max_xticks = 12
-                    step = max(1, len(all_x_labels) // max_xticks)
-                    tick_positions = list(range(0, len(all_x_labels), step))
-                    tick_labels = [all_x_labels[i] for i in tick_positions]
+                    ax1.grid(True, linestyle="--", alpha=0.5)
+                    title_str = f"设备运行数据多时段对比分析 (生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')})"
+                    ax1.set_title(title_str, fontsize=14, fontweight="bold", pad=15)
 
-                    ax1.set_xticks(tick_positions)
-                    ax1.set_xticklabels(tick_labels, rotation=30, ha="right")
-                    ax1.tick_params(axis="x", labelsize=10)
-
+                    # 合并图例
                     lines1, labels1 = ax1.get_legend_handles_labels()
                     lines2, labels2 = ax2.get_legend_handles_labels()
-                    
-                    combined_lines = lines1 + lines2
-                    combined_labels = labels1 + labels2
+                    ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize=10)
 
-                    ax1.legend(
-                        combined_lines,
-                        combined_labels,
-                        loc="upper center",
-                        bbox_to_anchor=(0.5, -0.18),
-                        ncol=2,
-                        fontsize=10,
-                        frameon=True,
-                    )
+                    plt.tight_layout()
 
-                    fig.tight_layout()
-
-                    # 图表标题中的阈值显示为整型
-                    if threshold is not None:
-                        chart_title_threshold = f"≥ {int(threshold)}"
-                    else:
-                        chart_title_threshold = "全部"
-                    chart_title = f"机组负荷/压差对比趋势图（最低负荷 {chart_title_threshold}）"
-                    plt.title(chart_title, fontsize=14, pad=20)
-
+                    # 保存到内存字节
                     import io
                     buf = io.BytesIO()
-                    fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
+                    fig.savefig(buf, format="png", dpi=300)
                     buf.seek(0)
-                    st.session_state.plotted_fig_bytes = buf.getvalue()
-                    st.session_state.plotted_title = chart_title
+                    fig_bytes = buf.getvalue()
+
+                    st.session_state.plotted_fig_bytes = fig_bytes
+                    st.session_state.plotted_title = title_str
                     st.session_state.plotted_periods_info = periods_detailed_info
+
+                    # 【核心新增】：自动保存生成的图片到 saved_images/ 文件夹，以便同步到 GitHub
+                    img_filename = f"plot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                    img_path = os.path.join(IMAGE_VAULT_DIR, img_filename)
+                    with open(img_path, "wb") as img_file:
+                        img_file.write(fig_bytes)
+
+                    st.success(f"图表生成成功，并已自动保存到本地图片库文件夹：{img_filename}")
                     plt.close(fig)
-                    st.success("多时段对比趋势图生成成功！")
 
             except Exception as e:
+                st.error(f"绘图过程发生错误：{e}")
                 if fig is not None:
                     plt.close(fig)
-                st.error(f"绘图过程中发生错误：{e}")
 
 # ============================================================
-# 9. 渲染与下载区域
+# 9. 展示图表与历史图片库调用
 # ============================================================
 
 if st.session_state.plotted_fig_bytes:
     st.markdown("---")
-    st.subheader("📊 生成的对比趋势图预览")
-    st.image(st.session_state.plotted_fig_bytes, use_container_width=True)
-
-    with st.container(border=True):
-        if threshold is not None:
-            current_threshold_str = f"负荷≥{int(threshold)}"
-        else:
-            current_threshold_str = "全部负荷"
-        st.markdown(f"📋 **各时段详细起止与配置说明（{current_threshold_str}）**", unsafe_allow_html=True)
-        
-        st.markdown(
-            "<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 12px; text-align: center;'>"
-            "<span style='color: #d93838; font-weight: bold; font-size: 16px;'>💡 提示：</span>"
-            "<span style='font-weight: bold; font-size: 15px; color: #1f1f1f;'>面积图代表负荷，折线图代表压差</span>"
-            "</div>",
-            unsafe_allow_html=True
-        )
-        
-        for item in st.session_state.plotted_periods_info:
-            color = item.get("color", "#31333F")
-            text = item.get("text", "")
-            st.markdown(
-                f"<div style='display: flex; align-items: center; margin-bottom: 6px;'>"
-                f"<span style='display: inline-block; width: 14px; height: 14px; background-color: {color}; margin-right: 8px; border-radius: 2px;'></span>"
-                f"<span style='font-size: 15px; color: #31333F;'>{text}</span>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-
+    st.subheader("📈 当前生成的对比趋势图")
+    st.image(st.session_state.plotted_fig_bytes, use_column_width=True)
+    
     st.download_button(
-        label="⬇️ 下载趋势图 PNG",
+        label="📥 下载当前高清图表 (PNG)",
         data=st.session_state.plotted_fig_bytes,
-        file_name="unit_load_pressure_comparison.png",
-        mime="image/png",
-        type="primary"
+        file_name="equipment_comparison_chart.png",
+        mime="image/png"
     )
+
+# 历史图片库调用模块（直接调用 saved_images/ 目录中的图片）
+st.markdown("---")
+st.subheader("🖼️ 历史图片库调用（来自 GitHub / 本地缓存文件夹）")
+
+if os.path.exists(IMAGE_VAULT_DIR):
+    saved_images = sorted(
+        [f for f in os.listdir(IMAGE_VAULT_DIR) if f.lower().endswith((".png", ".jpg", ".jpeg"))],
+        reverse=True
+    )
+    
+    if saved_images:
+        selected_vault_image = st.selectbox("选择历史生成的图片进行查看：", saved_images)
+        target_img_path = os.path.join(IMAGE_VAULT_DIR, selected_vault_image)
+        
+        st.image(target_img_path, caption=f"历史图片: {selected_vault_image}", use_column_width=True)
+        
+        with open(target_img_path, "rb") as f:
+            st.download_button(
+                label=f"📥 下载此历史图片 ({selected_vault_image})",
+                data=f.read(),
+                file_name=selected_vault_image,
+                mime="image/png"
+            )
+    else:
+        st.info("saved_images 文件夹中暂无历史图片。")
+else:
+    st.info("暂未检测到 saved_images 文件夹。")

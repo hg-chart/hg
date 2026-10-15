@@ -74,17 +74,18 @@ st.markdown("---")
 
 
 # ============================================================
-# 2. 文件库和历史时段方案
+# 2. 文件库和历史时段方案（增加回收站支持）
 # ============================================================
 
 VAULT_DIR = "uploaded_vault"
 os.makedirs(VAULT_DIR, exist_ok=True)
 TEMPLATES_FILE = os.path.join(VAULT_DIR, "templates_vault.json")
+TRASH_FILE = os.path.join(VAULT_DIR, "trash_vault.json")
 
 
 def default_templates():
     return {
-        "默认测试方案 (5个时段示例)": [
+        "时间段1": [
             {"start": "2026-08-01 01:01:00", "end": "2026-08-05 01:01:50", "run_sec": "0", "stop_sec": "-"},
             {"start": "2026-09-19 01:01:50", "end": "2026-09-25 13:09:50", "run_sec": "0", "stop_sec": "-"},
             {"start": "2026-09-25 13:10:50", "end": "2026-09-29 13:09:50", "run_sec": "30", "stop_sec": "780"},
@@ -117,8 +118,31 @@ def save_persistent_templates(templates):
         return False
 
 
+def load_trash_bin():
+    if os.path.exists(TRASH_FILE):
+        try:
+            with open(TRASH_FILE, "r", encoding="utf-8") as file:
+                data = json.load(file)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    return {}
+
+
+def save_trash_bin(trash):
+    try:
+        with open(TRASH_FILE, "w", encoding="utf-8") as file:
+            json.dump(trash, file, ensure_ascii=False, indent=4)
+        return True
+    except Exception:
+        return False
+
+
 if "saved_templates" not in st.session_state:
     st.session_state.saved_templates = load_persistent_templates()
+if "trash_bin" not in st.session_state:
+    st.session_state.trash_bin = load_trash_bin()
 if "intervals" not in st.session_state:
     st.session_state.intervals = []
 
@@ -127,6 +151,8 @@ if "plotted_fig_bytes" not in st.session_state:
     st.session_state.plotted_fig_bytes = None
 if "plotted_title" not in st.session_state:
     st.session_state.plotted_title = ""
+if "plotted_periods_info" not in st.session_state:
+    st.session_state.plotted_periods_info = []
 
 
 # ============================================================
@@ -258,7 +284,7 @@ if threshold_text.strip():
 
 
 # ============================================================
-# 6. 机组运行数据时间段选择
+# 6. 机组运行数据时间段选择（含删除按钮、自动时间段命名与回收站）
 # ============================================================
 
 st.subheader("4. 机组运行数据时间段选择")
@@ -274,24 +300,64 @@ for name, intervals_list in st.session_state.saved_templates.items():
         label = f"{name} (无有效时段)"
     template_options[label] = name
 
-select_col1, select_col2 = st.columns([3, 1])
-with select_col1:
+if template_options:
     options_list = list(template_options.keys())
-    if options_list:
-        selected_label = st.selectbox("机组运行数据时间段选择", options_list, label_visibility="collapsed")
-    else:
-        selected_label = None
-        st.info("暂无可用的时间段方案。")
+    
+    # 每一行展示：选择下拉框、确认按钮、删除按钮
+    for opt_label in options_list:
+        actual_key = template_options[opt_label]
+        sc1, sc2, sc3 = st.columns([5, 1, 1])
+        with sc1:
+            st.markdown(f"📌 **{opt_label}**")
+        with sc2:
+            if st.button("确认选择", key=f"select_{actual_key}", use_container_width=True):
+                st.session_state.intervals = [
+                    dict(item) for item in st.session_state.saved_templates[actual_key]
+                ]
+                st.success(f"已成功加载：{actual_key}")
+                st.rerun()
+        with sc3:
+            if st.button("删除", key=f"delete_{actual_key}", use_container_width=True):
+                # 放入回收站
+                st.session_state.trash_bin[actual_key] = st.session_state.saved_templates[actual_key]
+                save_trash_bin(st.session_state.trash_bin)
+                # 从活动方案中移除
+                del st.session_state.saved_templates[actual_key]
+                save_persistent_templates(st.session_state.saved_templates)
+                st.success(f"已将 {actual_key} 移入回收站。")
+                st.rerun()
+else:
+    st.info("暂无可用的时间段方案。")
 
-with select_col2:
-    if st.button("确认", use_container_width=True):
-        if selected_label and selected_label in template_options:
-            actual_key = template_options[selected_label]
-            st.session_state.intervals = [
-                dict(item) for item in st.session_state.saved_templates[actual_key]
-            ]
-            st.success(f"已成功加载：{actual_key}")
-            st.rerun()
+# 回收站管理模块
+if st.session_state.trash_bin:
+    with st.expander("🗑️ 回收站（防止误删除）", expanded=False):
+        st.write("以下是被删除的时间段方案，您可以选择恢复或彻底删除：")
+        trash_options = list(st.session_state.trash_bin.keys())
+        for trash_name in trash_options:
+            trash_intervals = st.session_state.trash_bin[trash_name]
+            first_s = trash_intervals[0].get("start", "") if trash_intervals else ""
+            last_e = trash_intervals[-1].get("end", "") if trash_intervals else ""
+            
+            tc1, tc2, tc3 = st.columns([4, 1, 1])
+            with tc1:
+                st.text(f"{trash_name} ({first_s} ~ {last_e})")
+            with tc2:
+                if st.button("♻️ 恢复", key=f"restore_{trash_name}", use_container_width=True):
+                    st.session_state.saved_templates[trash_name] = trash_intervals
+                    save_persistent_templates(st.session_state.saved_templates)
+                    del st.session_state.trash_bin[trash_name]
+                    save_trash_bin(st.session_state.trash_bin)
+                    st.success(f"已恢复方案：{trash_name}")
+                    st.rerun()
+            with tc3:
+                if st.button("🔥 彻底删除", key=f"perma_del_{trash_name}", use_container_width=True):
+                    del st.session_state.trash_bin[trash_name]
+                    save_trash_bin(st.session_state.trash_bin)
+                    st.success(f"已彻底删除方案：{trash_name}")
+                    st.rerun()
+
+st.markdown("---")
 
 # 1. 先在上方展示已添加的对比时段表格及管理按钮区
 if st.session_state.intervals:
@@ -322,7 +388,7 @@ if st.session_state.intervals:
         key="intervals_editor"
     )
 
-    bcol1, bcol2, bcol3, bcol4, bcol5 = st.columns(5)
+    bcol1, bcol2, bcol3, bcol4, bcol5, bcol6 = st.columns(6)
 
     with bcol1:
         if st.button("💾 保存修改", use_container_width=True):
@@ -346,6 +412,30 @@ if st.session_state.intervals:
                 st.error(f"保存失败，请检查时间格式是否正确: {ex}")
 
     with bcol2:
+        if st.button("💾 另存为新方案", use_container_width=True):
+            if not st.session_state.intervals:
+                st.warning("当前没有时段，无法保存。")
+            else:
+                # 自动生成名称：时间段1、时间段2...
+                existing_nums = []
+                for k in st.session_state.saved_templates.keys():
+                    if k.startswith("时间段"):
+                        try:
+                            num = int(k.replace("时间段", ""))
+                            existing_nums.append(num)
+                        except ValueError:
+                            pass
+                next_num = max(existing_nums) + 1 if existing_nums else 1
+                new_name = f"时间段{next_num}"
+                
+                st.session_state.saved_templates[new_name] = [
+                    dict(item) for item in st.session_state.intervals
+                ]
+                if save_persistent_templates(st.session_state.saved_templates):
+                    st.success(f"已成功保存为“{new_name}”！")
+                    st.rerun()
+
+    with bcol3:
         if st.button("⬆️ 上移", use_container_width=True):
             selected_indices = edited_df.index[edited_df["选择"] == True].tolist()
             if not selected_indices:
@@ -363,7 +453,7 @@ if st.session_state.intervals:
                     )
                     st.rerun()
 
-    with bcol3:
+    with bcol4:
         if st.button("⬇️ 下移", use_container_width=True):
             selected_indices = edited_df.index[edited_df["选择"] == True].tolist()
             if not selected_indices:
@@ -381,7 +471,7 @@ if st.session_state.intervals:
                     )
                     st.rerun()
 
-    with bcol4:
+    with bcol5:
         if st.button("❌ 删除", use_container_width=True):
             selected_indices = edited_df.index[edited_df["选择"] == True].tolist()
             if not selected_indices:
@@ -392,7 +482,7 @@ if st.session_state.intervals:
                 st.success("已删除选中时段！")
                 st.rerun()
 
-    with bcol5:
+    with bcol6:
         if st.button("🗑️ 清空", use_container_width=True):
             st.session_state.intervals = []
             st.success("已清空所有时段！")
@@ -423,7 +513,7 @@ else:
 default_end = default_start + timedelta(minutes=50)
 
 # ============================================================
-# 2. 放在下方的“添加新时段”表单（针对手机端优化：日期、时、分、秒完美同排显示）
+# 2. 放在下方的“添加新时段”表单
 # ============================================================
 with st.container(border=True):
     st.markdown("➕ **添加新时段**（自动智能衔接，支持秒级精准配置）")
@@ -548,6 +638,7 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
 
                 plotted_periods = []
                 diagnostics = []
+                periods_detailed_info = []
 
                 for index, interval in enumerate(st.session_state.intervals):
                     start_dt = pd.to_datetime(interval["start"])
@@ -577,6 +668,7 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                         "line_color": line_color,
                         "description": description,
                     })
+                    periods_detailed_info.append(f"时段 {index + 1}：{description}")
 
                 st.info("🔍 各时段数据检索诊断：" + " | ".join(diagnostics))
 
@@ -647,6 +739,8 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
 
                     ax1.set_title(title, fontsize=15, pad=16)
 
+                    # 为了避免图片下方图例文字过小，在图像本身不画过于拥挤的图例文字，
+                    # 仅保留基础图例或精简图例，具体的详细时间段在图片外部文字显示
                     handles1, labels1 = ax1.get_legend_handles_labels()
                     handles2, labels2 = ax2.get_legend_handles_labels()
                     ax1.legend(
@@ -654,7 +748,7 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                         labels1 + labels2,
                         loc="upper center",
                         bbox_to_anchor=(0.5, -0.23),
-                        fontsize=8,
+                        fontsize=7,
                         ncol=2,
                         framealpha=0.9,
                     )
@@ -672,6 +766,7 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     )
                     st.session_state.plotted_fig_bytes = image_buffer.getvalue()
                     st.session_state.plotted_title = title
+                    st.session_state.plotted_periods_info = periods_detailed_info
 
             except Exception as exc:
                 st.error(f"计算或绘图过程中发生错误：{exc}")
@@ -679,10 +774,17 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                 if fig is not None:
                     plt.close(fig)
 
-# 持续渲染已保存的图表，确保下载或其他操作后图表依然留在页面上
+# 持续渲染已保存的图表与图片外部的独立大字说明
 if st.session_state.plotted_fig_bytes is not None:
     st.success("图表生成成功！")
     st.image(st.session_state.plotted_fig_bytes, caption=st.session_state.plotted_title, use_container_width=True)
+    
+    # 纯文字独立标注区域（不在下载图片内，专门用于手机/电脑清晰查看）
+    with st.container(border=True):
+        st.markdown("📋 **【查看专用】各时段详细起止与配置说明**（下载图片时不会包含此段文字）：")
+        for info_item in st.session_state.plotted_periods_info:
+            st.markdown(f"- {info_item}")
+
     st.download_button(
         "⬇️ 下载趋势图 PNG",
         data=st.session_state.plotted_fig_bytes,

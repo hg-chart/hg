@@ -1135,7 +1135,6 @@ if r2_storage._get_r2_client() is not None:
                                 with open(local_trash_path, "wb") as tf:
                                     tf.write(img_bytes)
                                 
-                                r2_storage.r2_upload_file(local_trash_path, key=f"chart_trash_vault/{trash_composite_name}")
                                 r2_storage.r2_delete_key(target_key)
                                 
                                 st.session_state.pop("active_chart_key", None)
@@ -1151,7 +1150,7 @@ if r2_storage._get_r2_client() is not None:
         st.info("无法读取云端文件列表或存储桶为空。")
 
     # ============================================================
-    # 11. 图片回收站管理专区（严防“默认恢复方案”无中生有）
+    # 11. 图片回收站管理专区（彻底杜绝“默认恢复方案”）
     # ============================================================
     trashed_charts = sorted(
         name for name in os.listdir(CHART_TRASH_DIR)
@@ -1161,11 +1160,11 @@ if r2_storage._get_r2_client() is not None:
         with st.expander("🗑️ 图片回收站（管理已删除的历史图片）", expanded=False):
             st.write("以下是被删除的历史图片，您可以选择恢复或彻底删除：")
             for t_img in trashed_charts:
-                # 严格解析：如果文件名中没有包含 "___"，则直接跳过并清理掉该不规范文件，决不产生“默认恢复方案”
+                # 严厉拦截：如果文件名中没有包含 "___"，直接物理删除该不规范文件并跳过，绝不允许生成“默认恢复方案”
                 if "___" not in t_img:
-                    invalid_path = os.path.join(CHART_TRASH_DIR, t_img)
-                    if os.path.exists(invalid_path):
-                        os.remove(invalid_path)
+                    bad_path = os.path.join(CHART_TRASH_DIR, t_img)
+                    if os.path.exists(bad_path):
+                        os.remove(bad_path)
                     continue
 
                 orig_scheme, orig_filename = t_img.split("___", 1)
@@ -1182,7 +1181,6 @@ if r2_storage._get_r2_client() is not None:
                             shutil.copy(src_path, dest_path)
                             r2_storage.r2_upload_file(dest_path, key=f"chart_history/{orig_scheme}/{orig_filename}")
                             os.remove(src_path)
-                            r2_storage.r2_delete_key(f"chart_trash_vault/{t_img}")
                             if os.path.exists(dest_path):
                                 os.remove(dest_path)
                                 
@@ -1193,8 +1191,7 @@ if r2_storage._get_r2_client() is not None:
                         src_path = os.path.join(CHART_TRASH_DIR, t_img)
                         if os.path.exists(src_path):
                             os.remove(src_path)
-                        r2_storage.r2_delete_key(f"chart_trash_vault/{t_img}")
-                        st.success(f"已从云端彻底删除图片：{orig_filename}")
+                        st.success(f"已彻底删除图片：{orig_filename}")
                         st.rerun()
 else:
     st.info("请先配置并连接 Cloudflare R2 存储桶以使用云端图片检索功能。")

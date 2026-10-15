@@ -74,13 +74,14 @@ st.markdown("---")
 
 
 # ============================================================
-# 2. 文件库和历史时段方案（增加回收站支持）
+# 2. 文件库、时段方案与文件回收站支持
 # ============================================================
 
 VAULT_DIR = "uploaded_vault"
 os.makedirs(VAULT_DIR, exist_ok=True)
 TEMPLATES_FILE = os.path.join(VAULT_DIR, "templates_vault.json")
 TRASH_FILE = os.path.join(VAULT_DIR, "trash_vault.json")
+FILE_TRASH_FILE = os.path.join(VAULT_DIR, "file_trash_vault.json")
 
 
 def default_templates():
@@ -102,7 +103,6 @@ def load_persistent_templates():
             with open(TEMPLATES_FILE, "r", encoding="utf-8") as file:
                 data = json.load(file)
             if isinstance(data, dict):
-                # 兼容老数据：把旧名称自动规范化为“监测数据时间段X”
                 normalized_data = {}
                 idx = 1
                 for k, v in data.items():
@@ -146,10 +146,33 @@ def save_trash_bin(trash):
         return False
 
 
+def load_file_trash_bin():
+    if os.path.exists(FILE_TRASH_FILE):
+        try:
+            with open(FILE_TRASH_FILE, "r", encoding="utf-8") as file:
+                data = json.load(file)
+            if isinstance(data, list):
+                return data
+        except Exception:
+            pass
+    return []
+
+
+def save_file_trash_bin(trash_list):
+    try:
+        with open(FILE_TRASH_FILE, "w", encoding="utf-8") as file:
+            json.dump(trash_list, file, ensure_ascii=False, indent=4)
+        return True
+    except Exception:
+        return False
+
+
 if "saved_templates" not in st.session_state:
     st.session_state.saved_templates = load_persistent_templates()
 if "trash_bin" not in st.session_state:
     st.session_state.trash_bin = load_trash_bin()
+if "file_trash_bin" not in st.session_state:
+    st.session_state.file_trash_bin = load_file_trash_bin()
 if "intervals" not in st.session_state:
     st.session_state.intervals = []
 
@@ -163,7 +186,7 @@ if "plotted_periods_info" not in st.session_state:
 
 
 # ============================================================
-# 3. 上传及选择数据文件
+# 3. 上传及选择数据文件（支持文件列表选择、批量删除与文件回收站）
 # ============================================================
 
 st.subheader("1. 表格文件管理（支持上传和调用历史文件）")
@@ -172,6 +195,34 @@ uploaded_files = st.file_uploader(
     "上传工业数据表格文件（CSV / XLSX / XLS）",
     type=["csv", "xlsx", "xls"],
     accept_multiple_files=True,
+    help="支持上传文件（CSV, XLSX, XLS）"
+)
+
+# 自定义 CSS 覆盖 Streamlit 文件上传组件内的英文 "Browse files" / "Drag and drop..." 或 "Upload"
+st.markdown(
+    """
+    <style>
+    [data-testid='stFileUploader'] section button::after {
+        content: "上传文件";
+        visibility: visible;
+        display: block;
+        position: absolute;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background-color: #ffffff;
+        color: #31333F;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 400;
+        border-radius: 4px;
+        border: 1px solid rgba(49, 51, 63, 0.2);
+    }
+    [data-testid='stFileUploader'] section button {
+        position: relative;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
 )
 
 if uploaded_files:
@@ -180,7 +231,7 @@ if uploaded_files:
         target = os.path.join(VAULT_DIR, safe_name)
         with open(target, "wb") as file:
             file.write(uploaded_file.getbuffer())
-    st.success("文件已保存到当前运行环境的文件库。")
+    st.success("文件已成功保存到当前运行环境的文件库。")
 
 existing_files = sorted(
     name for name in os.listdir(VAULT_DIR)
@@ -189,24 +240,97 @@ existing_files = sorted(
 
 active_paths = []
 if existing_files:
-    with st.expander("📁 文件库（勾选本次分析所需文件）", expanded=True):
-        selected_files = st.multiselect(
-            "选择参与分析的文件",
-            existing_files,
-            default=existing_files,
-        )
+    with st.expander("📁 文件库（勾选本次分析所需文件，或进行批量删除）", expanded=True):
+        st.write("请在下方勾选参与分析的文件，或勾选后进行批量删除：")
+        
+        # 初始化选择状态
+        if "file_selections" not in st.session_state:
+            st.session_state.file_selections = {name: True for name in existing_files}
+        
+        # 确保新增文件默认被选中
+        for name in existing_files:
+            if name not in st.session_state.file_selections:
+                st.session_state.file_selections[name] = True
+
+        selected_files = []
+        files_to_delete = []
+
+        # 遍历文件列表展示
+        for name in existing_files:
+            f_col1, f_col2 = st.columns([0.1, 0.9])
+            with f_col1:
+                is_selected = st.checkbox("选择", value=st.session_state.file_selections.get(name, True), key=f"chk_file_{name}", label_visibility="collapsed")
+                st.session_state.file_selections[name] = is_selected
+                if is_selected:
+                    selected_files.append(name)
+            with f_col2:
+                st.text(f"📄 {name}")
+
+        btn_c1, btn_c2 = st.columns([2, 2])
+        with btn_c1:
+            if st.button("🗑️ 批量删除选中文件"):
+                deleted_any = False
+                for name, is_sel in list(st.session_state.file_selections.items()):
+                    if is_sel:
+                        file_path = os.path.join(VAULT_DIR, name)
+                        if os.path.exists(file_path):
+                            # 移入文件回收站记录名称
+                            if name not in st.session_state.file_trash_bin:
+                                st.session_state.file_trash_bin.append(name)
+                            save_file_trash_bin(st.session_state.file_trash_bin)
+                            # 从磁盘移除
+                            try:
+                                os.remove(file_path)
+                            except Exception:
+                                pass
+                            deleted_any = True
+                if deleted_any:
+                    st.success("已将选中的文件移入回收站！")
+                    st.rerun()
+                else:
+                    st.warning("请先勾选需要删除的文件。")
+
+        with btn_c2:
+            if st.button("🗑️ 清空文件库中的所有表格文件"):
+                for name in existing_files:
+                    file_path = os.path.join(VAULT_DIR, name)
+                    if os.path.exists(file_path):
+                        if name not in st.session_state.file_trash_bin:
+                            st.session_state.file_trash_bin.append(name)
+                        try:
+                            os.remove(file_path)
+                        except OSError as exc:
+                            st.warning(f"删除 {name} 失败：{exc}")
+                save_file_trash_bin(st.session_state.file_trash_bin)
+                st.success("已清空文件库！")
+                st.rerun()
+
         active_paths = [os.path.join(VAULT_DIR, name) for name in selected_files]
 
-        if st.button("🗑️ 清空文件库中的所有表格文件"):
-            for name in existing_files:
-                try:
-                    os.remove(os.path.join(VAULT_DIR, name))
-                except OSError as exc:
-                    st.warning(f"删除 {name} 失败：{exc}")
-            st.rerun()
+# 文件回收站管理模块
+if st.session_state.file_trash_bin:
+    with st.expander("🗑️ 文件回收站（防止误删除）", expanded=False):
+        st.write("以下是被删除的表格文件，您可以选择恢复或彻底删除：")
+        for trash_file in list(st.session_state.file_trash_bin):
+            ft_c1, ft_c2, ft_c3 = st.columns([4, 1, 1])
+            with ft_c1:
+                st.text(f"📄 {trash_file}")
+            with ft_c2:
+                if st.button("♻️ 恢复", key=f"restore_file_{trash_file}", use_container_width=True):
+                    # 检查是否有原文件残留（这里暂时无法直接从内存恢复文件内容，若文件已被删除，提示用户重新上传或通过已有方案）
+                    st.session_state.file_trash_bin.remove(trash_file)
+                    save_file_trash_bin(st.session_state.file_trash_bin)
+                    st.success(f"已将文件 {trash_file} 从回收站移除（若需继续使用请重新上传）。")
+                    st.rerun()
+            with ft_c3:
+                if st.button("🔥 彻底删除", key=f"perma_del_file_{trash_file}", use_container_width=True):
+                    st.session_state.file_trash_bin.remove(trash_file)
+                    save_file_trash_bin(st.session_state.file_trash_bin)
+                    st.success(f"已彻底删除文件：{trash_file}")
+                    st.rerun()
 
 if not active_paths:
-    st.info("请先上传或选择 CSV、Excel 数据文件。")
+    st.info("请先上传或勾选 CSV、Excel 数据文件。")
     st.stop()
 
 st.success(f"当前已选择 {len(active_paths)} 个文件参与分析。")
@@ -338,7 +462,7 @@ else:
 
 # 回收站管理模块
 if st.session_state.trash_bin:
-    with st.expander("🗑️ 回收站（防止误删除）", expanded=False):
+    with st.expander("🗑️ 方案回收站（防止误删除）", expanded=False):
         st.write("以下是被删除的时间段方案，您可以选择恢复或彻底删除：")
         trash_options = list(st.session_state.trash_bin.keys())
         for trash_name in trash_options:
@@ -423,7 +547,6 @@ if st.session_state.intervals:
             if not st.session_state.intervals:
                 st.warning("当前没有时段，无法保存。")
             else:
-                # 自动生成名称：监测数据时间段1、监测数据时间段2...
                 existing_nums = []
                 for k in st.session_state.saved_templates.keys():
                     if k.startswith("监测数据时间段"):
@@ -793,7 +916,6 @@ if st.session_state.plotted_fig_bytes is not None:
         for info_item in st.session_state.plotted_periods_info:
             color_hex = info_item["color"]
             text_content = info_item["text"]
-            # 用 HTML 渲染一个小色块，旁边紧跟文字说明
             st.markdown(
                 f"<div style='display: flex; align-items: center; margin-bottom: 6px;'>"
                 f"<span style='display: inline-block; width: 16px; height: 16px; background-color: {color_hex}; margin-right: 8px; border-radius: 3px; border: 1px solid #ccc;'></span>"

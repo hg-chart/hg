@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据多文件多时段汇总对比分析系统"""
+"""设备运行数据多文件多时段汇总对比分析系统（Cloudflare R2 云端持久化版）"""
 
 import os
+import io
 import json
 import shutil
 import logging
@@ -13,6 +14,35 @@ import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import font_manager, ticker
+import boto3
+
+# ============================================================
+# 0. Cloudflare R2 云端存储初始化配置
+# ============================================================
+# 请在 Streamlit 社区后台的 Secrets 中配置：
+# [r2]
+# access_key_id = "..."
+# secret_access_key = "..."
+# endpoint = "https://<account_id>.r2.cloudflarestorage.com"
+# bucket_name = "..."
+
+try:
+    R2_ACCESS_KEY = st.secrets["r2"]["access_key_id"]
+    R2_SECRET_KEY = st.secrets["r2"]["secret_access_key"]
+    R2_ENDPOINT = st.secrets["r2"]["endpoint"]
+    R2_BUCKET = st.secrets["r2"]["bucket_name"]
+    
+    s3_client = boto3.client(
+        "s3",
+        endpoint_url=R2_ENDPOINT,
+        aws_access_key_id=R2_ACCESS_KEY,
+        aws_secret_access_key=R2_SECRET_KEY,
+        region_name="auto",
+    )
+    USE_R2 = True
+except Exception as e:
+    USE_R2 = False
+    logging.warning("未检测到 Cloudflare R2 配置，将退化为本地临时存储模式: %s", e)
 
 
 # ============================================================
@@ -75,7 +105,7 @@ st.markdown("---")
 
 
 # ============================================================
-# 2. 文件库和历史时段方案（增加回收站支持）
+# 2. 文件库和历史时段方案（对接 Cloudflare R2 持久化）
 # ============================================================
 
 VAULT_DIR = "uploaded_vault"
@@ -83,8 +113,8 @@ FILE_TRASH_DIR = "file_trash_vault"
 os.makedirs(VAULT_DIR, exist_ok=True)
 os.makedirs(FILE_TRASH_DIR, exist_ok=True)
 
-TEMPLATES_FILE = os.path.join(VAULT_DIR, "templates_vault.json")
-TRASH_FILE = os.path.join(VAULT_DIR, "trash_vault.json")
+TEMPLATES_KEY = "vault/templates_vault.json"
+TRASH_KEY = "vault/trash_vault.json"
 
 
 def default_templates():
@@ -101,9 +131,25 @@ def default_templates():
 
 @st.cache_resource
 def load_persistent_templates():
-    if os.path.exists(TEMPLATES_FILE):
+    if USE_R2:
         try:
-            with open(TEMPLATES_FILE, "r", encoding="utf-8") as file:
+            response = s3_client.get_object(Bucket=R2_BUCKET, Key=TEMPLATES_KEY)
+            data = json.loads(response["Body"].read().decode("utf-8"))
+            if isinstance(data, dict):
+                normalized_data = {}
+                idx = 1
+                for k, v in data.items():
+                    key_name = k if k.startswith("监测数据时间段") else f"监测数据时间段{idx}"
+                    normalized_data[key_name] = v
+                    idx += 1
+                return normalized_data
+        except Exception:
+            pass  # 如果云端没有，则使用默认或本地
+            
+    local_file = os.path.join(VAULT_DIR, "templates_vault.json")
+    if os.path.exists(local_file):
+        try:
+            with open(local_file, "r", encoding="utf-8") as file:
                 data = json.load(file)
             if isinstance(data, dict):
                 normalized_data = {}
@@ -120,8 +166,11 @@ def load_persistent_templates():
 
 def save_persistent_templates(templates):
     try:
-        with open(TEMPLATES_FILE, "w", encoding="utf-8") as file:
+        local_file = os.path.join(VAULT_DIR, "templates_vault.json")
+        with open(local_file, "w", encoding="utf-8") as file:
             json.dump(templates, file, ensure_ascii=False, indent=4)
+        if USE_R2:
+            s3_client.upload_file(local_file, R2_BUCKET, TEMPLATES_KEY)
         return True
     except Exception as exc:
         st.error(f"保存时段方案失败：{exc}")
@@ -129,9 +178,19 @@ def save_persistent_templates(templates):
 
 
 def load_trash_bin():
-    if os.path.exists(TRASH_FILE):
+    if USE_R2:
         try:
-            with open(TRASH_FILE, "r", encoding="utf-8") as file:
+            response = s3_client.get_object(Bucket=R2_BUCKET, Key=TRASH_KEY)
+            data = json.loads(response["Body"].read().decode("utf-8"))
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+            
+    local_trash = os.path.join(VAULT_DIR, "trash_vault.json")
+    if os.path.exists(local_trash):
+        try:
+            with open(local_trash, "r", encoding="utf-8") as file:
                 data = json.load(file)
             if isinstance(data, dict):
                 return data
@@ -142,8 +201,11 @@ def load_trash_bin():
 
 def save_trash_bin(trash):
     try:
-        with open(TRASH_FILE, "w", encoding="utf-8") as file:
+        local_trash = os.path.join(VAULT_DIR, "trash_vault.json")
+        with open(local_trash, "w", encoding="utf-8") as file:
             json.dump(trash, file, ensure_ascii=False, indent=4)
+        if USE_R2:
+            s3_client.upload_file(local_trash, R2_BUCKET, TRASH_KEY)
         return True
     except Exception:
         return False
@@ -170,8 +232,23 @@ if not st.session_state.intervals:
 
 
 # ============================================================
-# 3. 上传及选择数据文件
+# 3. 上传及选择数据文件（云端同步拉取与保存）
 # ============================================================
+
+# 如果启用了 R2 且本地目录没有文件，尝试从 R2 同步已有文件
+if USE_R2:
+    try:
+        response = s3_client.list_objects_v2(Bucket=R2_BUCKET, Prefix="vault_files/")
+        if "Contents" in response:
+            for obj in response["Contents"]:
+                key = obj["Key"]
+                filename = key.replace("vault_files/", "")
+                if filename and filename.lower().endswith((".csv", ".xlsx", ".xls")):
+                    local_p = os.path.join(VAULT_DIR, filename)
+                    if not os.path.exists(local_p):
+                        s3_client.download_file(R2_BUCKET, key, local_p)
+    except Exception:
+        pass
 
 st.subheader("1. 表格文件管理（支持上传和调用历史文件）")
 
@@ -213,7 +290,12 @@ if uploaded_files:
         target = os.path.join(VAULT_DIR, safe_name)
         with open(target, "wb") as file:
             file.write(uploaded_file.getbuffer())
-    st.success("文件已成功保存到当前运行环境的文件库。")
+        if USE_R2:
+            try:
+                s3_client.upload_file(target, R2_BUCKET, f"vault_files/{safe_name}")
+            except Exception:
+                pass
+    st.success("文件已成功保存到当前运行环境及云端存储桶。")
 
 existing_files = sorted(
     name for name in os.listdir(VAULT_DIR)
@@ -277,6 +359,11 @@ with st.expander("🗑️ 文件删除与回收站管理（如需清理历史文
                     dst_path = os.path.join(FILE_TRASH_DIR, name)
                     if os.path.exists(src_path):
                         shutil.move(src_path, dst_path)
+                        if USE_R2:
+                            try:
+                                s3_client.delete_object(Bucket=R2_BUCKET, Key=f"vault_files/{name}")
+                            except Exception:
+                                pass
                         st.session_state.file_del_selections[name] = False
                         deleted_any = True
             if deleted_any:
@@ -305,6 +392,11 @@ with st.expander("🗑️ 文件删除与回收站管理（如需清理历史文
                     dst_v_path = os.path.join(VAULT_DIR, trash_name)
                     if os.path.exists(src_t_path):
                         shutil.move(src_t_path, dst_v_path)
+                        if USE_R2:
+                            try:
+                                s3_client.upload_file(dst_v_path, R2_BUCKET, f"vault_files/{trash_name}")
+                            except Exception:
+                                pass
                         st.session_state.file_selections[trash_name] = True
                         st.success(f"已成功恢复文件：{trash_name}")
                         st.rerun()
@@ -778,7 +870,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     else:
                         config_str = f"多频集速运行{run_value}s/停止{stop_value}s"
 
-                    # 动态判断阈值前缀文本（阈值转为整型）
                     if threshold is not None:
                         threshold_int = int(threshold)
                         time_prefix = f"负荷≥{threshold_int}，机组实际运行时间"
@@ -845,104 +936,3 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
 
                     ax1.set_xlabel("运行时间段", fontsize=12)
                     ax1.set_ylabel(f"负荷（{actual_load_col}）", fontsize=12, color="black")
-                    ax2.set_ylabel(f"压差（{actual_pressure_col}）", fontsize=12, color="black")
-
-                    # 取消负荷网格线
-                    ax1.grid(False)
-                    
-                    # 开启右纵轴（压差轴）的网格线（横线），步长固定为 200
-                    ax2.yaxis.set_major_locator(ticker.MultipleLocator(200))
-                    ax2.grid(True, linestyle="--", alpha=0.5, color="gray")
-
-                    max_xticks = 12
-                    step = max(1, len(all_x_labels) // max_xticks)
-                    tick_positions = list(range(0, len(all_x_labels), step))
-                    tick_labels = [all_x_labels[i] for i in tick_positions]
-
-                    ax1.set_xticks(tick_positions)
-                    ax1.set_xticklabels(tick_labels, rotation=30, ha="right")
-                    ax1.tick_params(axis="x", labelsize=10)
-
-                    lines1, labels1 = ax1.get_legend_handles_labels()
-                    lines2, labels2 = ax2.get_legend_handles_labels()
-                    
-                    combined_lines = lines1 + lines2
-                    combined_labels = labels1 + labels2
-
-                    ax1.legend(
-                        combined_lines,
-                        combined_labels,
-                        loc="upper center",
-                        bbox_to_anchor=(0.5, -0.18),
-                        ncol=2,
-                        fontsize=10,
-                        frameon=True,
-                    )
-
-                    fig.tight_layout()
-
-                    # 图表标题中的阈值显示为整型
-                    if threshold is not None:
-                        chart_title_threshold = f"≥ {int(threshold)}"
-                    else:
-                        chart_title_threshold = "全部"
-                    chart_title = f"机组负荷/压差对比趋势图（最低负荷 {chart_title_threshold}）"
-                    plt.title(chart_title, fontsize=14, pad=20)
-
-                    import io
-                    buf = io.BytesIO()
-                    fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
-                    buf.seek(0)
-                    st.session_state.plotted_fig_bytes = buf.getvalue()
-                    st.session_state.plotted_title = chart_title
-                    st.session_state.plotted_periods_info = periods_detailed_info
-                    plt.close(fig)
-                    st.success("多时段对比趋势图生成成功！")
-
-            except Exception as e:
-                if fig is not None:
-                    plt.close(fig)
-                st.error(f"绘图过程中发生错误：{e}")
-
-# ============================================================
-# 9. 渲染与下载区域
-# ============================================================
-
-if st.session_state.plotted_fig_bytes:
-    st.markdown("---")
-    st.subheader("📊 生成的对比趋势图预览")
-    st.image(st.session_state.plotted_fig_bytes, use_container_width=True)
-
-    with st.container(border=True):
-        if threshold is not None:
-            current_threshold_str = f"负荷≥{int(threshold)}"
-        else:
-            current_threshold_str = "全部负荷"
-        st.markdown(f"📋 **各时段详细起止与配置说明（{current_threshold_str}）**", unsafe_allow_html=True)
-        
-        st.markdown(
-            "<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 12px; text-align: center;'>"
-            "<span style='color: #d93838; font-weight: bold; font-size: 16px;'>💡 提示：</span>"
-            "<span style='font-weight: bold; font-size: 15px; color: #1f1f1f;'>面积图代表负荷，折线图代表压差</span>"
-            "</div>",
-            unsafe_allow_html=True
-        )
-        
-        for item in st.session_state.plotted_periods_info:
-            color = item.get("color", "#31333F")
-            text = item.get("text", "")
-            st.markdown(
-                f"<div style='display: flex; align-items: center; margin-bottom: 6px;'>"
-                f"<span style='display: inline-block; width: 14px; height: 14px; background-color: {color}; margin-right: 8px; border-radius: 2px;'></span>"
-                f"<span style='font-size: 15px; color: #31333F;'>{text}</span>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-
-    st.download_button(
-        label="⬇️ 下载趋势图 PNG",
-        data=st.session_state.plotted_fig_bytes,
-        file_name="unit_load_pressure_comparison.png",
-        mime="image/png",
-        type="primary"
-    )

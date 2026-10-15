@@ -841,7 +841,7 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax2.grid(False)
 
                     # ============================================================
-                    # 【最终修正】：严格根据真实压差的最大/最小值设定轴边界，杜绝虚高！
+                    # 【严厉修正】：直接精准贴合真实最大值 p_max，绝不虚高！
                     # ============================================================
                     all_pressure_values = []
                     for period in plotted_periods:
@@ -853,19 +853,15 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                         
                         st.info(f"📊 压差实际数值校验：当前时段内压差最小值 = {p_min:.2f}，最大值 = {p_max:.2f}")
 
-                        # 严格贴合实际：下限按 100 向下取整，上限直接精准贴合实际最大值（只加一点点微小边距以防曲线顶到边，绝不无故飙到 2400/3000）
                         p_lower = max(0, int(p_min // 100) * 100)
-                        
-                        # 核心改动：用 ceil 或精确顶到实际最大值的下一个整百，不盲目加多余跨度
-                        import math
-                        p_upper = math.ceil(p_max / 100.0) * 100
-                        if p_lower == p_upper:
-                            p_upper += 100
+                        p_upper = float(p_max)  # 精准贴合真实最大值
+                        if p_lower >= p_upper:
+                            p_upper = p_lower + 100
 
-                        # 绝对锁定右纵轴上下限
+                        # 关闭自动缩放，强制锁定
+                        ax2.set_autoscaley_on(False)
                         ax2.set_ylim(p_lower, p_upper)
 
-                        # 自动计算自适应步长（当跨度较小时使用 100 或 200 步长）
                         span = p_upper - p_lower
                         if span <= 500:
                             step = 50

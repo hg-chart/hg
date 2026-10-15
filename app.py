@@ -258,45 +258,44 @@ if threshold_text.strip():
 
 
 # ============================================================
-# 6. 多时段配置与历史方案
+# 6. 机组运行数据时间段选择
 # ============================================================
 
-st.subheader("4. 多时段对比配置")
+st.subheader("4. 机组运行数据时间段选择")
 
-with st.expander("📁 历史时段方案管理", expanded=False):
-    template_names = list(st.session_state.saved_templates.keys())
-    tcol1, tcol2 = st.columns([2, 1])
+# 生成带有起止时间标注的选项列表（X 列表）
+template_options = {}
+for name, intervals_list in st.session_state.saved_templates.items():
+    if intervals_list and isinstance(intervals_list, list):
+        first_start = intervals_list[0].get("start", "")
+        last_end = intervals_list[-1].get("end", "")
+        label = f"{name} ({first_start} ~ {last_end})"
+    else:
+        label = f"{name} (无有效时段)"
+    template_options[label] = name
 
-    with tcol1:
-        if template_names:
-            chosen_template = st.selectbox("选择已保存的历史方案", template_names)
-            if st.button("📥 一键加载该历史方案"):
-                st.session_state.intervals = [
-                    dict(item) for item in st.session_state.saved_templates[chosen_template]
-                ]
-                st.success(f"已加载历史方案：{chosen_template}")
-                st.rerun()
-        else:
-            st.info("尚无保存的历史方案。")
+select_col1, select_col2 = st.columns([3, 1])
+with select_col1:
+    options_list = list(template_options.keys())
+    if options_list:
+        selected_label = st.selectbox("机组运行数据时间段选择", options_list, label_visibility="collapsed")
+    else:
+        selected_label = None
+        st.info("暂无可用的时间段方案。")
 
-    with tcol2:
-        template_name = st.text_input("当前方案名称", value="我的常用方案")
-        if st.button("💾 保存当前时段方案"):
-            if not st.session_state.intervals:
-                st.warning("当前没有时段，无法保存。")
-            elif not template_name.strip():
-                st.warning("请填写方案名称。")
-            else:
-                st.session_state.saved_templates[template_name.strip()] = [
-                    dict(item) for item in st.session_state.intervals
-                ]
-                if save_persistent_templates(st.session_state.saved_templates):
-                    st.success(f"方案“{template_name.strip()}”已保存。")
-                    st.rerun()
+with select_col2:
+    if st.button("确认", use_container_width=True):
+        if selected_label and selected_label in template_options:
+            actual_key = template_options[selected_label]
+            st.session_state.intervals = [
+                dict(item) for item in st.session_state.saved_templates[actual_key]
+            ]
+            st.success(f"已成功加载：{actual_key}")
+            st.rerun()
 
 # 1. 先在上方展示已添加的对比时段表格及管理按钮区
 if st.session_state.intervals:
-    st.write("当前已添加的对比时段（图表按此顺序依次排列）。勾选“选择”后，可在下方修改、上移/下移或删除：")
+    st.write("当前已选择的时间段（图表按此顺序依次排列）。勾选“选择”后，可在下方修改、上移/下移或删除：")
 
     table_data = []
     for idx, item in enumerate(st.session_state.intervals):

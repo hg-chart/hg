@@ -233,7 +233,6 @@ if uploaded_files:
         target = os.path.join(VAULT_DIR, safe_name)
         with open(target, "wb") as file:
             file.write(uploaded_file.getbuffer())
-        # 同步上传到 Cloudflare R2
         if r2_storage._get_r2_client() is not None:
             r2_storage.r2_upload_file(target)
     st.success("文件已成功保存到当前运行环境的文件库并同步至 Cloudflare R2。")
@@ -458,6 +457,7 @@ if template_options:
                 st.session_state.intervals = [
                     dict(item) for item in st.session_state.saved_templates[actual_key]
                 ]
+                st.session_state["current_scheme_name"] = actual_key  # 记录当前选中的方案名
                 st.success(f"已成功加载：{actual_key}")
                 st.rerun()
         with sc3:
@@ -570,6 +570,7 @@ if st.session_state.intervals:
                 st.session_state.saved_templates[new_name] = [
                     dict(item) for item in st.session_state.intervals
                 ]
+                st.session_state["current_scheme_name"] = new_name
                 if save_persistent_templates(st.session_state.saved_templates):
                     st.success(f"已成功保存为“{new_name}”！")
                     st.rerun()
@@ -927,17 +928,8 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     st.session_state.plotted_fig_bytes = buf.getvalue()
                     st.session_state.plotted_title = chart_title
                     st.session_state.plotted_periods_info = periods_detailed_info
-                    
-                    # 将生成的图表保存到本地目录并同步到 R2 存储桶
-                    chart_filename = f"chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                    chart_local_path = os.path.join(CHART_HISTORY_DIR, chart_filename)
-                    with open(chart_local_path, "wb") as img_file:
-                        img_file.write(st.session_state.plotted_fig_bytes)
-                    if r2_storage._get_r2_client() is not None:
-                        r2_storage.r2_upload_file(chart_local_path)
-
                     plt.close(fig)
-                    st.success("多时段对比趋势图生成成功，并已自动同步至 Cloudflare R2！")
+                    st.success("多时段对比趋势图生成成功！")
 
             except Exception as e:
                 if fig is not None:
@@ -945,7 +937,7 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                 st.error(f"绘图过程中发生错误：{e}")
 
 # ============================================================
-# 9. 渲染与下载区域
+# 9. 渲染与下载及手动保存到 R2 区域
 # ============================================================
 
 if st.session_state.plotted_fig_bytes:
@@ -979,10 +971,116 @@ if st.session_state.plotted_fig_bytes:
                 unsafe_allow_html=True
             )
 
-    st.download_button(
-        label="⬇️ 下载趋势图 PNG",
-        data=st.session_state.plotted_fig_bytes,
-        file_name="unit_load_pressure_comparison.png",
-        mime="image/png",
-        type="primary"
-    )
+    dl_col1, dl_col2 = st.columns(2)
+    with dl_col1:
+        st.download_button(
+            label="⬇️ 下载趋势图 PNG",
+            data=st.session_state.plotted_fig_bytes,
+            file_name="unit_load_pressure_comparison.png",
+            mime="image/png",
+            type="primary",
+            use_container_width=True
+        )
+    with dl_col2:
+        if st.button("☁️ 保存图片到 Cloudflare R2", use_container_width=True):
+            if r2_storage._get_r2_client() is None:
+                st.error("Cloudflare R2 尚未连接，无法保存。")
+            else:
+                try:
+                    # 自动获取当前方案名称（若未加载则默认为“默认时间段方案”）
+                    scheme_name = st.session_state.get("current_scheme_name", "默认时间段方案")
+                    
+                    # 提炼负荷标签
+                    threshold_label = f"负荷_{int(threshold)}" if threshold is not None else "全部负荷"
+                    
+                    time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    chart_filename = f"{threshold_label}_{time_str}.png"
+                    
+                    # 按方案名称自动建立本地子目录归类
+                    sub_dir = os.path.join(CHART_HISTORY_DIR, scheme_name)
+                    os.makedirs(sub_dir, exist_ok=True)
+                    chart_local_path = os.path.join(sub_dir, chart_filename)
+                    
+                    with open(chart_local_path, "wb") as img_file:
+                        img_file.write(st.session_state.plotted_fig_bytes)
+                    
+                    # 上传到 R2，路径结构：chart_history/方案名/负荷标签_时间.png
+                    success = r2_storage.r2_upload_file(chart_local_path, key=f"chart_history/{scheme_name}/{chart_filename}")
+                    if success:
+                        st.success(f"图片已成功自动归类并同步至 Cloudflare R2！\n📁 云端路径：`chart_history/{scheme_name}/{chart_filename}`")
+                    else:
+                        st.error("同步到 Cloudflare R2 失败，请检查网络或配置。")
+                except Exception as e:
+                    st.error(f"保存图片时出错：{e}")
+
+
+# ============================================================
+# 10. 云端历史图片按标签检索与调用专区
+# ============================================================
+st.markdown("---")
+st.subheader("☁️ 云端历史图片按标签检索与调用")
+
+if r2_storage._get_r2_client() is not None:
+    if st.button("🔄 刷新云端图片列表"):
+        st.rerun()
+        
+    all_keys = r2_storage.r2_list_keys()
+    if all_keys:
+        chart_keys = [k for k in all_keys if "chart_history/" in k and k.endswith(".png")]
+        
+        if chart_keys:
+            schemes_dict = {}
+            for k in chart_keys:
+                parts = k.split("/")
+                if len(parts) >= 3:
+                    scheme = parts[-2]  # 大类：时间段方案名
+                    filename = parts[-1]  # 文件名
+                    if scheme not in schemes_dict:
+                        schemes_dict[scheme] = []
+                    schemes_dict[scheme].append((filename, k))
+            
+            # 第一步：选择大类（时间段方案）
+            selected_scheme = st.selectbox("📁 选择时间段方案大类", list(schemes_dict.keys()))
+            
+            if selected_scheme:
+                files_in_scheme = schemes_dict[selected_scheme]
+                
+                # 提取该方案下的所有负荷标签
+                load_tags = set()
+                for fname, _ in files_in_scheme:
+                    tag = fname.split("_")[0] if "_" in fname else "未知"
+                    load_tags.add(tag)
+                
+                # 第二步：选择负荷子类标签筛选
+                selected_tag = st.selectbox("🏷️ 选择负荷标签筛选", list(load_tags))
+                
+                filtered_files = [(fname, k) for fname, k in files_in_scheme if fname.startswith(selected_tag)]
+                
+                if filtered_files:
+                    file_options = {fname: k for fname, k in filtered_files}
+                    selected_file_name = st.selectbox("📄 选择具体的历史图片文件", list(file_options.keys()))
+                    
+                    if selected_file_name:
+                        target_key = file_options[selected_file_name]
+                        client = r2_storage._get_r2_client()
+                        try:
+                            resp = client.get_object(Bucket=r2_storage._r2_bucket(), Key=target_key)
+                            img_bytes = resp["Body"].read()
+                            
+                            st.image(img_bytes, caption=f"云端图片：{selected_scheme} -> {selected_file_name}", use_container_width=True)
+                            st.download_button(
+                                label="⬇️ 下载调用的云端图片",
+                                data=img_bytes,
+                                file_name=selected_file_name,
+                                mime="image/png"
+                            )
+                        except Exception as e:
+                            st.error(f"从云端加载图片失败：{e}")
+                else:
+                    st.info("该方案下暂无此负荷标签的图片。")
+        else:
+            st.info("云端暂无保存的历史图片。")
+    else:
+        st.info("无法读取云端文件列表或存储桶为空。")
+else:
+    st.info("请先配置并连接 Cloudflare R2 存储桶以使用云端图片检索功能。")

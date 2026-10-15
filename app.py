@@ -529,7 +529,7 @@ if st.session_state.trash_bin:
 st.markdown("---")
 
 if st.session_state.intervals:
-    st.write("当前已选择的时间段（图表按此顺序依次排列）。勾选“选择”后，可在下方修改、上移/下移或删除：")
+    st.write("当前已选择的时间段（双击数值可以直接修改）。勾选“选择”后，可上移/下移或删除：")
 
     table_data = []
     for idx, item in enumerate(st.session_state.intervals):

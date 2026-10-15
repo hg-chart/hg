@@ -836,12 +836,12 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax1.set_ylabel(f"负荷（{actual_load_col}）", fontsize=12, color="black")
                     ax2.set_ylabel(f"压差（{actual_pressure_col}）", fontsize=12, color="black")
 
-                    # 取消负荷网格线
+                    # 取消默认网格线
                     ax1.grid(False)
                     ax2.grid(False)
 
                     # ============================================================
-                    # 【正确缩进的位置】：所有时段循环绘制完毕后，统一收集和设定右纵轴范围
+                    # 【最终修正】：严格根据真实压差的最大/最小值设定轴边界，杜绝虚高！
                     # ============================================================
                     all_pressure_values = []
                     for period in plotted_periods:
@@ -850,16 +850,30 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     if all_pressure_values:
                         p_min = min(all_pressure_values)
                         p_max = max(all_pressure_values)
-                        # 动态计算上下边界（向下/向上圆整并各留余量）
-                        p_lower = max(0, int(p_min // 100) * 100)
-                        p_upper = int((p_max // 100) + 1) * 100
-                        if p_lower == p_upper:
-                            p_upper += 200
-                        ax2.set_ylim(p_lower, p_upper)
                         
-                        # 根据实际跨度自适应选择合理的刻度步长
+                        st.info(f"📊 压差实际数值校验：当前时段内压差最小值 = {p_min:.2f}，最大值 = {p_max:.2f}")
+
+                        # 严格贴合实际：下限按 100 向下取整，上限直接精准贴合实际最大值（只加一点点微小边距以防曲线顶到边，绝不无故飙到 2400/3000）
+                        p_lower = max(0, int(p_min // 100) * 100)
+                        
+                        # 核心改动：用 ceil 或精确顶到实际最大值的下一个整百，不盲目加多余跨度
+                        import math
+                        p_upper = math.ceil(p_max / 100.0) * 100
+                        if p_lower == p_upper:
+                            p_upper += 100
+
+                        # 绝对锁定右纵轴上下限
+                        ax2.set_ylim(p_lower, p_upper)
+
+                        # 自动计算自适应步长（当跨度较小时使用 100 或 200 步长）
                         span = p_upper - p_lower
-                        step = 200 if span > 1000 else 100
+                        if span <= 500:
+                            step = 50
+                        elif span <= 1500:
+                            step = 100
+                        else:
+                            step = 200
+
                         ax2.yaxis.set_major_locator(ticker.MultipleLocator(step))
                         ax2.grid(True, linestyle="--", linewidth=0.7, alpha=0.5, color="grey")
 

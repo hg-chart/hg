@@ -12,7 +12,7 @@ import streamlit as st
 import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib import font_manager
+from matplotlib import font_manager, ticker
 
 
 # ============================================================
@@ -841,36 +841,11 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax2.grid(False)
 
                     # ============================================================
-                    # 严格锁定压差右纵轴步长为200的双数刻度与参考线（剔除所有奇数，如1500, 2500）
+                    # 采用 Matplotlib 干净的原生 Locator 机制：
+                    # 设定 200 步长，只显示偶数刻度与对应的网格参考线，彻底消除重影
                     # ============================================================
-                    p_min, p_max = ax2.get_ylim()
-                    
-                    # 确定当前的上下边界，按 200 对齐
-                    y_start = int(p_min // 200) * 200
-                    y_end = int((p_max // 200) + 1) * 200
-                    
-                    # 严格生成仅包含双数（步长为200）的刻度列表
-                    custom_ticks = list(range(y_start, y_end + 1, 200))
-                    
-                    # 强制设置右轴刻度，彻底消灭 1500、2500 等奇数刻度
-                    ax2.set_yticks(custom_ticks)
-
-                    for p_val in custom_ticks:
-                        ax2.axhline(
-                            y=p_val,
-                            color="grey",
-                            linestyle="--",
-                            linewidth=0.7,
-                            alpha=0.5
-                        )
-                        # 在右侧边缘标注数值
-                        ax2.text(
-                            1.002, p_val, f" {p_val}",
-                            transform=ax2.get_yaxis_transform(),
-                            fontsize=9,
-                            color="dimgray",
-                            verticalalignment="center"
-                        )
+                    ax2.yaxis.set_major_locator(ticker.MultipleLocator(200))
+                    ax2.grid(True, linestyle="--", linewidth=0.7, alpha=0.5, color="grey")
 
                     total_points = len(all_x_labels)
                     tick_step = max(1, total_points // 10)

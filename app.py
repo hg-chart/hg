@@ -836,33 +836,41 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax1.set_ylabel(f"负荷（{actual_load_col}）", fontsize=12, color="black")
                     ax2.set_ylabel(f"压差（{actual_pressure_col}）", fontsize=12, color="black")
 
-                    # 取消负荷网格线（把 grid 设为 False，保持图面干净）
+                    # 取消负荷网格线
                     ax1.grid(False)
                     ax2.grid(False)
 
                     # ============================================================
-                    # 仅保留压差右纵轴步长为200的横向参考线（1000, 1200, 1400, 1600, 1800, 2000...）
+                    # 严格锁定压差右纵轴步长为200的双数刻度与参考线（剔除所有奇数，如1500, 2500）
                     # ============================================================
                     p_min, p_max = ax2.get_ylim()
-                    # 动态生成从 800 开始到 3000、步长为 200 的参考标准线集合
-                    marker_pressures = list(range(800, 4001, 200))
-                    for p_val in marker_pressures:
-                        if p_min <= p_val <= p_max:
-                            ax2.axhline(
-                                y=p_val,
-                                color="grey",
-                                linestyle="--",
-                                linewidth=0.7,
-                                alpha=0.5
-                            )
-                            # 在右侧边缘标注数值，避免拥挤重影
-                            ax2.text(
-                                1.002, p_val, f" {p_val}",
-                                transform=ax2.get_yaxis_transform(),
-                                fontsize=9,
-                                color="dimgray",
-                                verticalalignment="center"
-                            )
+                    
+                    # 确定当前的上下边界，按 200 对齐
+                    y_start = int(p_min // 200) * 200
+                    y_end = int((p_max // 200) + 1) * 200
+                    
+                    # 严格生成仅包含双数（步长为200）的刻度列表
+                    custom_ticks = list(range(y_start, y_end + 1, 200))
+                    
+                    # 强制设置右轴刻度，彻底消灭 1500、2500 等奇数刻度
+                    ax2.set_yticks(custom_ticks)
+
+                    for p_val in custom_ticks:
+                        ax2.axhline(
+                            y=p_val,
+                            color="grey",
+                            linestyle="--",
+                            linewidth=0.7,
+                            alpha=0.5
+                        )
+                        # 在右侧边缘标注数值
+                        ax2.text(
+                            1.002, p_val, f" {p_val}",
+                            transform=ax2.get_yaxis_transform(),
+                            fontsize=9,
+                            color="dimgray",
+                            verticalalignment="center"
+                        )
 
                     total_points = len(all_x_labels)
                     tick_step = max(1, total_points // 10)

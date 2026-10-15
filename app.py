@@ -810,7 +810,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                             part[actual_time_col].dt.strftime("%m-%d %H:%M:%S").tolist()
                         )
 
-                        # 【图一调整】：将“负荷”放在描述的前面，让图标后面紧接着“负荷”
                         ax1.fill_between(
                             x_values,
                             part[actual_load_col].to_numpy(),
@@ -825,7 +824,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                             linewidth=0.8,
                             alpha=0.9,
                         )
-                        # 【图一调整】：将“压差”放在描述的前面，让图标后面紧接着“压差”
                         ax2.plot(
                             x_values,
                             part[actual_pressure_col].to_numpy(),
@@ -854,17 +852,9 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     lines1, labels1 = ax1.get_legend_handles_labels()
                     lines2, labels2 = ax2.get_legend_handles_labels()
                     
-                    # 左右两栏交替排列图例
-                    combined_lines = []
-                    combined_labels = []
-                    max_len = max(len(lines1), len(lines2))
-                    for i in range(max_len):
-                        if i < len(lines1):
-                            combined_lines.append(lines1[i])
-                            combined_labels.append(labels1[i])
-                        if i < len(lines2):
-                            combined_lines.append(lines2[i])
-                            combined_labels.append(labels2[i])
+                    # 【核心修改处】：让左侧全部是负荷（lines1），右侧全部是压差（lines2）
+                    combined_lines = lines1 + lines2
+                    combined_labels = labels1 + labels2
 
                     ax1.legend(
                         combined_lines,
@@ -907,7 +897,6 @@ if st.session_state.plotted_fig_bytes:
 
     with st.container(border=True):
         st.markdown("📋 **【查看专用】各时段详细起止与配置说明** <span style='color:gray; font-size:12px;'>（下载图片时不会包含此段文字）</span>", unsafe_allow_html=True)
-        # 【图二调整】：在上面一段话的下面新增一行字
         st.markdown("面积图代表负荷，折线图代表压差")
         
         for item in st.session_state.plotted_periods_info:

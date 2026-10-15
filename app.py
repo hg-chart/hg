@@ -649,7 +649,7 @@ with st.container(border=True):
         with ec3:
             end_minute = st.number_input("分 ", min_value=0, max_value=59, value=default_end.minute, key="e_m")
         with ec4:
-            end_second = st.number_input("秒 ", min_value=0, max_value=59, value=default_end.second, key="s_s")
+            end_second = st.number_input("秒 ", min_value=0, max_value=59, value=default_end.second, key="e_s") # 修复：将 key 改为 "e_s"
 
         run_col, stop_col, btn_col = st.columns([2, 2, 1.5])
         with run_col:
@@ -778,7 +778,7 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     else:
                         config_str = f"多频集速运行{run_value}s/停止{stop_value}s"
 
-                    # 根据是否设置了阈值动态切换前缀显示
+                    # 动态判断阈值前缀文本
                     if threshold is not None:
                         time_prefix = f"负荷≥{threshold}，机组实际运行时间"
                     else:

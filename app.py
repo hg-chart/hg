@@ -144,7 +144,7 @@ def load_persistent_templates():
                     idx += 1
                 return normalized_data
         except Exception:
-            pass  # 如果云端没有，则使用默认或本地
+            pass  
             
     local_file = os.path.join(VAULT_DIR, "templates_vault.json")
     if os.path.exists(local_file):
@@ -235,7 +235,6 @@ if not st.session_state.intervals:
 # 3. 上传及选择数据文件（云端同步拉取与保存）
 # ============================================================
 
-# 如果启用了 R2 且本地目录没有文件，尝试从 R2 同步已有文件
 if USE_R2:
     try:
         response = s3_client.list_objects_v2(Bucket=R2_BUCKET, Prefix="vault_files/")
@@ -936,3 +935,60 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
 
                     ax1.set_xlabel("运行时间段", fontsize=12)
                     ax1.set_ylabel(f"负荷（{actual_load_col}）", fontsize=12, color="black")
+                    ax2.set_ylabel(f"压差（{actual_pressure_col}）", fontsize=12, color="black")
+                    ax1.grid(True, linestyle="--", alpha=0.3)
+
+                    # X 轴稀疏化显示标签
+                    total_pts = cursor
+                    if total_pts > 0:
+                        max_ticks = 15
+                        step = max(1, total_pts // max_ticks)
+                        tick_positions = list(range(0, total_pts, step))
+                        tick_labels = [all_x_labels[i] for i in tick_positions]
+                        ax1.set_xticks(tick_positions)
+                        ax1.set_xticklabels(tick_labels, rotation=30, ha="right", fontsize=9)
+
+                    # 图例合并
+                    lines_1, labels_1 = ax1.get_legend_handles_labels()
+                    lines_2, labels_2 = ax2.get_legend_handles_labels()
+                    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc="upper left", fontsize=10)
+
+                    title_str = "多文件多时段机组运行数据对比分析趋势图"
+                    ax1.set_title(title_str, fontsize=14, pad=20)
+                    plt.tight_layout()
+
+                    # 保存到内存字节，以便后续展示
+                    buf = io.BytesIO()
+                    fig.savefig(buf, format="png", dpi=150)
+                    buf.seek(0)
+                    st.session_state.plotted_fig_bytes = buf.getvalue()
+                    st.session_state.plotted_title = title_str
+                    st.session_state.plotted_periods_info = periods_detailed_info
+
+                    st.pyplot(fig)
+                    plt.close(fig)
+
+            except Exception as e:
+                st.error(f"绘图过程中发生错误：{e}")
+
+# 如果已有生成的图表，直接在页面展示并提供云端保存按钮
+if st.session_state.plotted_fig_bytes:
+    st.markdown("---")
+    st.subheader("5. 分析结果与图表持久化")
+    st.image(st.session_state.plotted_fig_bytes, caption=st.session_state.plotted_title, use_container_width=True)
+    
+    if st.button("💾 将当前分析图表保存到 Cloudflare R2 存储桶"):
+        if USE_R2:
+            try:
+                img_name = f"charts/analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                s3_client.put_object(
+                    Bucket=R2_BUCKET,
+                    Key=img_name,
+                    Body=st.session_state.plotted_fig_bytes,
+                    ContentType="image/png"
+                )
+                st.success(f"图表已成功保存至 Cloudflare R2 存储桶，路径：{img_name}")
+            except Exception as e:
+                st.error(f"保存图表到 Cloudflare 失败：{e}")
+        else:
+            st.warning("未启用 Cloudflare R2，无法保存到云端。")

@@ -836,42 +836,10 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax1.set_ylabel(f"负荷（{actual_load_col}）", fontsize=12, color="black")
                     ax2.set_ylabel(f"压差（{actual_pressure_col}）", fontsize=12, color="black")
 
-                    # 取消默认网格线
+                    # 完全移除原先对右纵轴强加的各种死板限制和步长计算
+                    # 左右纵轴全部采用 Matplotlib 默认行为，取消强制网格线
                     ax1.grid(False)
                     ax2.grid(False)
-
-                    # ============================================================
-                    # 【核心彻底修正】：右纵轴上限绝对不虚高，精准贴合真实最大值 p_max！
-                    # ============================================================
-                    all_pressure_values = []
-                    for period in plotted_periods:
-                        all_pressure_values.extend(period["data"][actual_pressure_col].dropna().tolist())
-
-                    if all_pressure_values:
-                        p_min = min(all_pressure_values)
-                        p_max = max(all_pressure_values)
-                        
-                        st.info(f"📊 压差实际数值校验：当前时段内压差最小值 = {p_min:.2f}，最大值 = {p_max:.2f}")
-
-                        p_lower = max(0, int(p_min // 100) * 100)
-                        p_upper = float(p_max)  # 绝不盲目取整，精准贴合真实最大值！
-                        if p_lower >= p_upper:
-                            p_upper = p_lower + 100
-
-                        # 关闭自动缩放，死死锁死在 p_max 上
-                        ax2.set_autoscaley_on(False)
-                        ax2.set_ylim(p_lower, p_upper)
-
-                        span = p_upper - p_lower
-                        if span <= 500:
-                            step = 50
-                        elif span <= 1500:
-                            step = 100
-                        else:
-                            step = 200
-
-                        ax2.yaxis.set_major_locator(ticker.MultipleLocator(step))
-                        ax2.grid(True, linestyle="--", linewidth=0.7, alpha=0.5, color="grey")
 
                     total_points = len(all_x_labels)
                     tick_step = max(1, total_points // 10)

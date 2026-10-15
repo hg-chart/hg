@@ -917,9 +917,8 @@ if st.session_state.plotted_fig_bytes:
             current_threshold_str = "全部负荷"
         st.markdown(f"📋 **各时段详细起止与配置说明（{current_threshold_str}）**", unsafe_allow_html=True)
         
-        # 修改：利用 text-align: center 实现提示内容居中显示
         st.markdown(
-            "<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 12px; text-align: center;'>"
+            "<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 12px;'>"
             "<span style='color: #d93838; font-weight: bold; font-size: 16px;'>💡 提示：</span>"
             "<span style='font-weight: bold; font-size: 15px; color: #1f1f1f;'>面积图代表负荷，折线图代表压差</span>"
             "</div>",

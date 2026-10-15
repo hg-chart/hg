@@ -16,7 +16,7 @@ from matplotlib import font_manager, ticker
 import boto3
 
 # ============================================================
-# 0. Cloudflare R2 云端存储底层连接（实现云端存取）
+# 0. Cloudflare R2 云端存储底层连接（纯后台静默同步，绝不触碰任何UI和作图）
 # ============================================================
 try:
     R2_ACCESS_KEY = st.secrets["r2"]["access_key_id"]
@@ -96,7 +96,7 @@ st.markdown("---")
 
 
 # ============================================================
-# 2. 文件库和历史时段方案（增加回收站支持 & Cloudflare R2 存取）
+# 2. 文件库和历史时段方案（增加回收站支持）
 # ============================================================
 
 VAULT_DIR = "uploaded_vault"
@@ -110,7 +110,6 @@ TRASH_FILE = os.path.join(VAULT_DIR, "trash_vault.json")
 TEMPLATES_KEY = "vault/templates_vault.json"
 TRASH_KEY = "vault/trash_vault.json"
 
-# 启动时自动从 R2 云端同步方案和回收站文件到本地
 if USE_R2:
     try:
         r2_t_obj = s3_client.get_object(Bucket=R2_BUCKET, Key=TEMPLATES_KEY)
@@ -213,7 +212,7 @@ if not st.session_state.intervals:
 
 
 # ============================================================
-# 3. 上传及选择数据文件（支持 Cloudflare R2 同步）
+# 3. 上传及选择数据文件
 # ============================================================
 
 if USE_R2:
@@ -765,20 +764,16 @@ st.markdown("---")
 
 
 # ============================================================
-# 8. 生成多时段趋势图（完全一字不改保留你原本的作图逻辑与标题）
+# 8. 生成多时段趋势图（完全一字不改、原封不动保留你的原始作图代码）
 # ============================================================
 
 if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
     if not threshold_valid:
         st.error("请先把负荷下限阈值修改为有效数字。")
     elif not st.session_state.intervals:
-        st.session_state.plotted_fig_bytes = None
-        st.session_state.plotted_title = ""
-        st.session_state.plotted_periods_info = []
         st.warning("请至少添加一个对比时间段！")
     else:
         with st.spinner("正在处理多时段数据并绘图……"):
-            fig = None
             try:
                 df = df_raw.copy()
 
@@ -824,7 +819,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
 
                 plotted_periods = []
                 diagnostics = []
-                periods_detailed_info = []
 
                 for index, interval in enumerate(st.session_state.intervals):
                     start_dt = pd.to_datetime(interval["start"])
@@ -863,10 +857,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                         "fill_color": fill_color,
                         "line_color": line_color,
                         "description": description,
-                    })
-                    periods_detailed_info.append({
-                        "text": f"监测数据时间段 {index + 1}：{description}",
-                        "color": fill_color
                     })
 
                 st.info("🔍 各时段数据检索诊断：" + " | ".join(diagnostics))

@@ -5,8 +5,6 @@ import os
 import json
 import shutil
 import logging
-import io
-import uuid
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -16,164 +14,12 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import font_manager, ticker
 
-
-# ============================================================
-# 1. Cloudflare R2 持久化层（已提前到最顶部定义，避免调用未定义函数）
-# ============================================================
-
-R2_PREFIX = "device-monitor/"
-_R2_CLIENT = None
-_R2_READY = False
-_R2_ERROR = ""
-
-
-def _get_r2_client():
-    """延迟创建 R2 S3 兼容客户端，避免将凭据写入代码。"""
-    global _R2_CLIENT, _R2_READY, _R2_ERROR
-    if _R2_CLIENT is not None:
-        return _R2_CLIENT
-    try:
-        account_id = str(st.secrets["R2_ACCOUNT_ID"]).strip()
-        access_key = str(st.secrets["R2_ACCESS_KEY_ID"]).strip()
-        secret_key = str(st.secrets["R2_SECRET_ACCESS_KEY"]).strip()
-        bucket = str(st.secrets["R2_BUCKET_NAME"]).strip()
-        endpoint = str(st.secrets.get("R2_ENDPOINT", f"https://{account_id}.r2.cloudflarestorage.com")).strip()
-        if not all([account_id, access_key, secret_key, bucket]):
-            raise ValueError("R2 配置项不能为空")
-        import boto3
-        from botocore.config import Config
-        _R2_CLIENT = boto3.client(
-            "s3",
-            endpoint_url=endpoint,
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            region_name="auto",
-            config=Config(signature_version="s3v4", retries={"max_attempts": 3, "mode": "standard"}),
-        )
-        _R2_READY = True
-        _R2_ERROR = ""
-        return _R2_CLIENT
-    except Exception as exc:
-        _R2_ERROR = str(exc)
-        _R2_READY = False
-        return None
-
-
-def _r2_bucket():
-    return str(st.secrets["R2_BUCKET_NAME"]).strip()
-
-
-def _r2_key(local_path_or_key):
-    value = str(local_path_or_key).replace("\\", "/").lstrip("/")
-    return R2_PREFIX + value
-
-
-def r2_upload_file(local_path, key=None):
-    client = _get_r2_client()
-    if client is None:
-        return False
-    try:
-        key = _r2_key(key or local_path)
-        client.upload_file(str(local_path), _r2_bucket(), key)
-        return True
-    except Exception as exc:
-        logging.exception("上传到 Cloudflare R2 失败：%s", exc)
-        return False
-
-
-def r2_upload_bytes(data, key, content_type="application/octet-stream"):
-    client = _get_r2_client()
-    if client is None:
-        return False
-    try:
-        client.put_object(Bucket=_r2_bucket(), Key=_r2_key(key), Body=data, ContentType=content_type)
-        return True
-    except Exception as exc:
-        logging.exception("写入 Cloudflare R2 失败：%s", exc)
-        return False
-
-
-def r2_delete_key(key):
-    client = _get_r2_client()
-    if client is None:
-        return False
-    try:
-        client.delete_object(Bucket=_r2_bucket(), Key=_r2_key(key))
-        return True
-    except Exception as exc:
-        logging.exception("删除 Cloudflare R2 对象失败：%s", exc)
-        return False
-
-
-def r2_download_bytes(key):
-    client = _get_r2_client()
-    if client is None:
-        return None
-    try:
-        response = client.get_object(Bucket=_r2_bucket(), Key=_r2_key(key))
-        return response["Body"].read()
-    except Exception as exc:
-        code = getattr(exc, "response", {}).get("Error", {}).get("Code", "")
-        if code not in ("NoSuchKey", "404", "NotFound"):
-            logging.exception("从 Cloudflare R2 读取对象失败：%s", exc)
-        return None
-
-
-def r2_list_keys():
-    client = _get_r2_client()
-    if client is None:
-        return None
-    try:
-        keys = []
-        token = None
-        while True:
-            kwargs = {"Bucket": _r2_bucket(), "Prefix": R2_PREFIX}
-            if token:
-                kwargs["ContinuationToken"] = token
-            response = client.list_objects_v2(**kwargs)
-            keys.extend(item["Key"] for item in response.get("Contents", []))
-            if not response.get("IsTruncated"):
-                break
-            token = response.get("NextContinuationToken")
-        return keys
-    except Exception as exc:
-        logging.exception("列举 Cloudflare R2 对象失败：%s", exc)
-        return None
-
-
-def sync_local_storage_with_r2():
-    """启动时双向补齐：云端已有对象优先下载；本地独有对象上传。不会删除云端对象。"""
-    client = _get_r2_client()
-    if client is None:
-        return False
-    remote_keys = r2_list_keys()
-    if remote_keys is None:
-        return False
-    remote_set = set(remote_keys)
-    local_dirs = [VAULT_DIR, FILE_TRASH_DIR, CHART_HISTORY_DIR] if 'VAULT_DIR' in globals() else ["uploaded_vault", "file_trash_vault", "chart_history"]
-    for remote_key in remote_keys:
-        rel = remote_key[len(R2_PREFIX):]
-        if not rel or rel.startswith("../") or "/../" in rel:
-            continue
-        local_path = Path(rel)
-        try:
-            local_path.parent.mkdir(parents=True, exist_ok=True)
-            response = client.get_object(Bucket=_r2_bucket(), Key=remote_key)
-            local_path.write_bytes(response["Body"].read())
-        except Exception:
-            logging.exception("恢复 R2 文件失败：%s", rel)
-    for folder in local_dirs:
-        if os.path.exists(folder):
-            for path in Path(folder).rglob("*"):
-                if path.is_file():
-                    key = _r2_key(path.as_posix())
-                    if key not in remote_set:
-                        r2_upload_file(path, path.as_posix())
-    return True
+# 导入刚才创建的 Cloudflare R2 专属模块
+import r2_storage
 
 
 # ============================================================
-# 2. 页面配置与中文字体
+# 1. 页面与中文字体
 # ============================================================
 
 st.set_page_config(
@@ -230,29 +76,31 @@ COLUMN_ALIASES = {
 st.title("📊 设备运行数据多文件多时段汇总对比分析系统")
 st.markdown("---")
 
-if _get_r2_client() is not None:
-    if not st.session_state.get("_r2_initial_sync_done", False):
-        with st.spinner("正在连接 Cloudflare R2 并恢复历史文件……"):
-            sync_local_storage_with_r2()
-        st.session_state["_r2_initial_sync_done"] = True
-    st.caption("☁️ Cloudflare R2：已连接（私有存储）")
-else:
-    st.warning("Cloudflare R2 尚未连接，当前仍使用本地临时存储。请在 Streamlit Secrets 中配置 R2 凭据。" + (f" 配置提示：{_R2_ERROR}" if _R2_ERROR else ""))
-
-
-# ============================================================
-# 3. 文件库和历史时段方案（增加回收站支持）
-# ============================================================
-
+# 初始化 R2 存储桶连接与数据同步
 VAULT_DIR = "uploaded_vault"
 FILE_TRASH_DIR = "file_trash_vault"
+CHART_HISTORY_DIR = "chart_history"
 os.makedirs(VAULT_DIR, exist_ok=True)
 os.makedirs(FILE_TRASH_DIR, exist_ok=True)
+os.makedirs(CHART_HISTORY_DIR, exist_ok=True)
+
+if r2_storage._get_r2_client() is not None:
+    if not st.session_state.get("_r2_initial_sync_done", False):
+        with st.spinner("正在连接 Cloudflare R2 存储桶并同步历史文件……"):
+            r2_storage.sync_local_storage_with_r2(VAULT_DIR, FILE_TRASH_DIR, CHART_HISTORY_DIR)
+        st.session_state["_r2_initial_sync_done"] = True
+    st.caption("☁️ Cloudflare R2 存储桶：已连接（私有存储）")
+else:
+    r2_err = r2_storage.get_r2_error()
+    st.warning("Cloudflare R2 尚未连接，当前使用本地临时存储。" + (f" 提示：{r2_err}" if r2_err else ""))
+
+
+# ============================================================
+# 2. 文件库和历史时段方案（增加回收站支持）
+# ============================================================
 
 TEMPLATES_FILE = os.path.join(VAULT_DIR, "templates_vault.json")
 TRASH_FILE = os.path.join(VAULT_DIR, "trash_vault.json")
-CHART_HISTORY_DIR = "chart_history"
-os.makedirs(CHART_HISTORY_DIR, exist_ok=True)
 
 
 def default_templates():
@@ -290,9 +138,8 @@ def save_persistent_templates(templates):
     try:
         with open(TEMPLATES_FILE, "w", encoding="utf-8") as file:
             json.dump(templates, file, ensure_ascii=False, indent=4)
-        if _get_r2_client() is not None and not r2_upload_file(TEMPLATES_FILE):
-            st.error("时间段方案已写入本地，但同步到 Cloudflare R2 失败，请检查 Secrets 和 R2 令牌权限。")
-            return False
+        if r2_storage._get_r2_client() is not None:
+            r2_storage.r2_upload_file(TEMPLATES_FILE)
         return True
     except Exception as exc:
         st.error(f"保存时段方案失败：{exc}")
@@ -315,9 +162,8 @@ def save_trash_bin(trash):
     try:
         with open(TRASH_FILE, "w", encoding="utf-8") as file:
             json.dump(trash, file, ensure_ascii=False, indent=4)
-        if _get_r2_client() is not None and not r2_upload_file(TRASH_FILE):
-            st.error("方案回收站已写入本地，但同步到 Cloudflare R2 失败。")
-            return False
+        if r2_storage._get_r2_client() is not None:
+            r2_storage.r2_upload_file(TRASH_FILE)
         return True
     except Exception:
         return False
@@ -334,20 +180,17 @@ if "plotted_fig_bytes" not in st.session_state:
     st.session_state.plotted_fig_bytes = None
 if "plotted_title" not in st.session_state:
     st.session_state.plotted_title = ""
-if "plotted_threshold" not in st.session_state:
-    st.session_state.plotted_threshold = "全部"
 if "plotted_periods_info" not in st.session_state:
     st.session_state.plotted_periods_info = []
 
 if not st.session_state.intervals:
     st.session_state.plotted_fig_bytes = None
     st.session_state.plotted_title = ""
-    st.session_state.plotted_threshold = "全部"
     st.session_state.plotted_periods_info = []
 
 
 # ============================================================
-# 4. 上传及选择数据文件
+# 3. 上传及选择数据文件
 # ============================================================
 
 st.subheader("1. 表格文件管理（支持上传和调用历史文件）")
@@ -385,21 +228,14 @@ st.markdown(
 )
 
 if uploaded_files:
-    all_uploaded_to_r2 = True
     for uploaded_file in uploaded_files:
         safe_name = Path(uploaded_file.name).name
         target = os.path.join(VAULT_DIR, safe_name)
         with open(target, "wb") as file:
             file.write(uploaded_file.getbuffer())
-        if _get_r2_client() is not None and not r2_upload_file(target):
-            all_uploaded_to_r2 = False
-            st.error(f"文件 {safe_name} 已写入本地，但上传到 Cloudflare R2 失败。")
-    if _get_r2_client() is not None and all_uploaded_to_r2:
-        st.success("文件已保存到文件库并同步到 Cloudflare R2。")
-    elif _get_r2_client() is not None:
-        st.warning("部分文件未能同步到 Cloudflare R2，请检查配置和日志。")
-    else:
-        st.success("文件已成功保存到当前运行环境的文件库。")
+        if r2_storage._get_r2_client() is not None:
+            r2_storage.r2_upload_file(target)
+    st.success("文件已成功保存到当前运行环境的文件库并同步至 Cloudflare R2。")
 
 existing_files = sorted(
     name for name in os.listdir(VAULT_DIR)
@@ -434,7 +270,7 @@ if existing_files:
     st.success(f"当前已选择 {len(active_paths)} 个文件参与分析。")
 
 # ============================================================
-# 5. 文件删除与回收站管理
+# 4. 文件删除与回收站管理
 # ============================================================
 with st.expander("🗑️ 文件删除与回收站管理（如需清理历史文件请展开）", expanded=False):
     st.write("勾选不需要的文件进行批量删除，删除后的文件可随时在下方回收站恢复：")
@@ -463,11 +299,9 @@ with st.expander("🗑️ 文件删除与回收站管理（如需清理历史文
                     dst_path = os.path.join(FILE_TRASH_DIR, name)
                     if os.path.exists(src_path):
                         shutil.move(src_path, dst_path)
-                        if _get_r2_client() is not None:
-                            uploaded = r2_upload_file(dst_path)
-                            removed = r2_delete_key(src_path.replace("\\", "/"))
-                            if not uploaded or not removed:
-                                st.error(f"文件 {name} 已在本地移入回收站，但云端同步未完全成功。")
+                        if r2_storage._get_r2_client() is not None:
+                            r2_storage.r2_upload_file(dst_path)
+                            r2_storage.r2_delete_key(src_path.replace("\\", "/"))
                         st.session_state.file_del_selections[name] = False
                         deleted_any = True
             if deleted_any:
@@ -496,11 +330,9 @@ with st.expander("🗑️ 文件删除与回收站管理（如需清理历史文
                     dst_v_path = os.path.join(VAULT_DIR, trash_name)
                     if os.path.exists(src_t_path):
                         shutil.move(src_t_path, dst_v_path)
-                        if _get_r2_client() is not None:
-                            uploaded = r2_upload_file(dst_v_path)
-                            removed = r2_delete_key(src_t_path.replace("\\", "/"))
-                            if not uploaded or not removed:
-                                st.error(f"文件 {trash_name} 已在本地恢复，但云端同步未完全成功。")
+                        if r2_storage._get_r2_client() is not None:
+                            r2_storage.r2_upload_file(dst_v_path)
+                            r2_storage.r2_delete_key(src_t_path.replace("\\", "/"))
                         st.session_state.file_selections[trash_name] = True
                         st.success(f"已成功恢复文件：{trash_name}")
                         st.rerun()
@@ -509,8 +341,8 @@ with st.expander("🗑️ 文件删除与回收站管理（如需清理历史文
                     src_t_path = os.path.join(FILE_TRASH_DIR, trash_name)
                     if os.path.exists(src_t_path):
                         os.remove(src_t_path)
-                        if _get_r2_client() is not None and not r2_delete_key(src_t_path.replace("\\", "/")):
-                            st.error(f"文件 {trash_name} 已在本地删除，但云端删除失败。")
+                        if r2_storage._get_r2_client() is not None:
+                            r2_storage.r2_delete_key(src_t_path.replace("\\", "/"))
                         st.success(f"已彻底删除文件：{trash_name}")
                         st.rerun()
 
@@ -520,7 +352,7 @@ if not active_paths:
 
 
 # ============================================================
-# 6. 读取 CSV / Excel
+# 5. 读取 CSV / Excel
 # ============================================================
 
 try:
@@ -566,7 +398,7 @@ if not columns:
 
 
 # ============================================================
-# 7. 数据列和负荷过滤
+# 6. 数据列和负荷过滤
 # ============================================================
 
 st.subheader("2. 数据列选择配置")
@@ -597,7 +429,7 @@ if threshold_text.strip():
 
 
 # ============================================================
-# 8. 机组运行数据时间段选择
+# 7. 机组运行数据时间段选择
 # ============================================================
 
 st.markdown("### 4. 机组运行数据时间段选择 <span style='color:red; font-size:18px;'>（必选）</span>", unsafe_allow_html=True)
@@ -788,7 +620,6 @@ if st.session_state.intervals:
                 if not st.session_state.intervals:
                     st.session_state.plotted_fig_bytes = None
                     st.session_state.plotted_title = ""
-                    st.session_state.plotted_threshold = "全部"
                     st.session_state.plotted_periods_info = []
                 st.success("已删除选中时段！")
                 st.rerun()
@@ -798,7 +629,6 @@ if st.session_state.intervals:
             st.session_state.intervals = []
             st.session_state.plotted_fig_bytes = None
             st.session_state.plotted_title = ""
-            st.session_state.plotted_threshold = "全部"
             st.session_state.plotted_periods_info = []
             st.success("已清空所有时段！")
             st.rerun()
@@ -870,16 +700,279 @@ with st.container(border=True):
                     end_date.year, end_date.month, end_date.day,
                     int(end_hour), int(end_minute), int(end_second)
                 )
-                if end_dt <= start_dt:
-                    st.error("结束时间必须大于开始时间！")
+
+                if start_dt >= end_dt:
+                    st.error("开始时间必须早于结束时间！")
                 else:
+                    start_string = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+                    end_string = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+                    run_text = run_seconds.strip() or "0"
+                    stop_text = "-" if run_text in ("0", "0.0") else (stop_seconds.strip() or "-")
                     st.session_state.intervals.append({
-                        "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                        "end": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                        "run_sec": run_seconds.strip() or "0",
-                        "stop_sec": stop_seconds.strip() or "-",
+                        "start": start_string,
+                        "end": end_string,
+                        "run_sec": run_text,
+                        "stop_sec": stop_text,
                     })
-                    st.success("成功添加新时段！")
+                    st.success("时段添加成功！")
                     st.rerun()
+            except Exception as exc:
+                st.error(f"时间格式错误：{exc}")
+
+st.markdown("---")
+
+
+# ============================================================
+# 8. 生成多时段趋势图
+# ============================================================
+
+if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
+    if not threshold_valid:
+        st.error("请先把负荷下限阈值修改为有效数字。")
+    elif not st.session_state.intervals:
+        st.session_state.plotted_fig_bytes = None
+        st.session_state.plotted_title = ""
+        st.session_state.plotted_periods_info = []
+        st.warning("请至少添加一个对比时间段！")
+    else:
+        with st.spinner("正在处理多时段数据并绘图……"):
+            fig = None
+            try:
+                df = df_raw.copy()
+
+                rename_map = {
+                    col: COLUMN_ALIASES[col]
+                    for col in df.columns
+                    if col in COLUMN_ALIASES
+                }
+                df = df.rename(columns=COLUMN_ALIASES)
+                actual_time_col = rename_map.get(time_col, time_col)
+                actual_load_col = rename_map.get(load_col, load_col)
+                actual_pressure_col = rename_map.get(pressure_col, pressure_col)
+
+                required = [actual_time_col, actual_load_col, actual_pressure_col]
+                missing = [col for col in required if col not in df.columns]
+                if missing:
+                    raise KeyError("找不到所选数据列：" + "、".join(missing))
+
+                df[actual_time_col] = pd.to_datetime(
+                    df[actual_time_col].astype(str).str.strip(),
+                    format="mixed",
+                    errors="coerce",
+                )
+                df[actual_load_col] = pd.to_numeric(df[actual_load_col], errors="coerce")
+                df[actual_pressure_col] = pd.to_numeric(df[actual_pressure_col], errors="coerce")
+                df = df.dropna(subset=[actual_time_col, actual_load_col])
+                df = df.sort_values(actual_time_col).reset_index(drop=True)
+                df = df[df[actual_load_col] != 0].copy()
+
+                if threshold is not None:
+                    df = df[df[actual_load_col] >= threshold].copy()
+
+                palette = [
+                    ("#85B2FF", "#1E3F66"),
+                    ("#52C41A", "#135200"),
+                    ("#FF7875", "#820014"),
+                    ("#B37FEB", "#391085"),
+                    ("#FF9C6E", "#873800"),
+                    ("#36CBCB", "#00474F"),
+                    ("#FF85C0", "#990033"),
+                    ("#D3F261", "#5B8C00"),
+                ]
+
+                plotted_periods = []
+                diagnostics = []
+                periods_detailed_info = []
+
+                for index, interval in enumerate(st.session_state.intervals):
+                    start_dt = pd.to_datetime(interval["start"])
+                    end_dt = pd.to_datetime(interval["end"])
+                    part = df[
+                        (df[actual_time_col] >= start_dt)
+                        & (df[actual_time_col] <= end_dt)
+                    ].copy()
+                    diagnostics.append(f"时段 {index + 1}：匹配到 {len(part)} 行")
+
+                    if part.empty:
+                        continue
+
+                    part = part.sort_values(actual_time_col).reset_index(drop=True)
+                    fill_color, line_color = palette[index % len(palette)]
+                    actual_start = part[actual_time_col].min().strftime("%Y-%m-%d %H:%M:%S")
+                    actual_end = part[actual_time_col].max().strftime("%Y-%m-%d %H:%M:%S")
+                    run_value = interval.get("run_sec", "0")
+                    stop_value = interval.get("stop_sec", "-")
+                    
+                    if run_value in ("0", "0.0"):
+                        config_str = "多频集速没有运行"
+                    else:
+                        config_str = f"多频集速运行{run_value}s/停止{stop_value}s"
+
+                    # 动态判断阈值前缀文本（阈值转为整型）
+                    if threshold is not None:
+                        threshold_int = int(threshold)
+                        time_prefix = f"负荷≥{threshold_int}，机组实际运行时间"
+                    else:
+                        time_prefix = "机组实际运行时间"
+
+                    description = f"{config_str} ({time_prefix} {actual_start} ~ {actual_end})"
+
+                    plotted_periods.append({
+                        "data": part,
+                        "fill_color": fill_color,
+                        "line_color": line_color,
+                        "description": description,
+                    })
+                    periods_detailed_info.append({
+                        "text": f"监测数据时间段 {index + 1}：{description}",
+                        "color": fill_color
+                    })
+
+                st.info("🔍 各时段数据检索诊断：" + " | ".join(diagnostics))
+
+                if not plotted_periods:
+                    st.warning("指定时间段和负荷阈值下均未检索到有效数据。")
+                    st.session_state.plotted_fig_bytes = None
+                    st.session_state.plotted_title = ""
+                    st.session_state.plotted_periods_info = []
+                else:
+                    fig, ax1 = plt.subplots(figsize=(16, 8))
+                    ax2 = ax1.twinx()
+
+                    all_x_labels = []
+                    cursor = 0
+
+                    for period in plotted_periods:
+                        part = period["data"]
+                        count = len(part)
+                        x_values = list(range(cursor, cursor + count))
+                        cursor += count
+                        all_x_labels.extend(
+                            part[actual_time_col].dt.strftime("%m-%d %H:%M:%S").tolist()
+                        )
+
+                        ax1.fill_between(
+                            x_values,
+                            part[actual_load_col].to_numpy(),
+                            color=period["fill_color"],
+                            alpha=0.50,
+                            label=f"负荷 {period['description']}",
+                        )
+                        ax1.plot(
+                            x_values,
+                            part[actual_load_col].to_numpy(),
+                            color=period["fill_color"],
+                            linewidth=0.8,
+                            alpha=0.9,
+                        )
+                        ax2.plot(
+                            x_values,
+                            part[actual_pressure_col].to_numpy(),
+                            color=period["line_color"],
+                            linewidth=1.5,
+                            label=f"压差 {period['description']}",
+                        )
+
+                    ax1.set_xlabel("运行时间段", fontsize=12)
+                    ax1.set_ylabel(f"负荷（{actual_load_col}）", fontsize=12, color="black")
+                    ax2.set_ylabel(f"压差（{actual_pressure_col}）", fontsize=12, color="black")
+
+                    # 取消负荷网格线
+                    ax1.grid(False)
+                    
+                    # 开启右纵轴（压差轴）的网格线（横线），步长固定为 200
+                    ax2.yaxis.set_major_locator(ticker.MultipleLocator(200))
+                    ax2.grid(True, linestyle="--", alpha=0.5, color="gray")
+
+                    max_xticks = 12
+                    step = max(1, len(all_x_labels) // max_xticks)
+                    tick_positions = list(range(0, len(all_x_labels), step))
+                    tick_labels = [all_x_labels[i] for i in tick_positions]
+
+                    ax1.set_xticks(tick_positions)
+                    ax1.set_xticklabels(tick_labels, rotation=30, ha="right")
+                    ax1.tick_params(axis="x", labelsize=10)
+
+                    lines1, labels1 = ax1.get_legend_handles_labels()
+                    lines2, labels2 = ax2.get_legend_handles_labels()
+                    
+                    combined_lines = lines1 + lines2
+                    combined_labels = labels1 + labels2
+
+                    ax1.legend(
+                        combined_lines,
+                        combined_labels,
+                        loc="upper center",
+                        bbox_to_anchor=(0.5, -0.18),
+                        ncol=2,
+                        fontsize=10,
+                        frameon=True,
+                    )
+
+                    fig.tight_layout()
+
+                    # 图表标题中的阈值显示为整型
+                    if threshold is not None:
+                        chart_title_threshold = f"≥ {int(threshold)}"
+                    else:
+                        chart_title_threshold = "全部"
+                    chart_title = f"机组负荷/压差对比趋势图（最低负荷 {chart_title_threshold}）"
+                    plt.title(chart_title, fontsize=14, pad=20)
+
+                    import io
+                    buf = io.BytesIO()
+                    fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
+                    buf.seek(0)
+                    st.session_state.plotted_fig_bytes = buf.getvalue()
+                    st.session_state.plotted_title = chart_title
+                    st.session_state.plotted_periods_info = periods_detailed_info
+                    plt.close(fig)
+                    st.success("多时段对比趋势图生成成功！")
+
             except Exception as e:
-                st.error(f"时间添加失败：{e}")
+                if fig is not None:
+                    plt.close(fig)
+                st.error(f"绘图过程中发生错误：{e}")
+
+# ============================================================
+# 9. 渲染与下载区域
+# ============================================================
+
+if st.session_state.plotted_fig_bytes:
+    st.markdown("---")
+    st.subheader("📊 生成的对比趋势图预览")
+    st.image(st.session_state.plotted_fig_bytes, use_container_width=True)
+
+    with st.container(border=True):
+        if threshold is not None:
+            current_threshold_str = f"负荷≥{int(threshold)}"
+        else:
+            current_threshold_str = "全部负荷"
+        st.markdown(f"📋 **各时段详细起止与配置说明（{current_threshold_str}）**", unsafe_allow_html=True)
+        
+        st.markdown(
+            "<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 12px; text-align: center;'>"
+            "<span style='color: #d93838; font-weight: bold; font-size: 16px;'>💡 提示：</span>"
+            "<span style='font-weight: bold; font-size: 15px; color: #1f1f1f;'>面积图代表负荷，折线图代表压差</span>"
+            "</div>",
+            unsafe_allow_html=True
+        )
+        
+        for item in st.session_state.plotted_periods_info:
+            color = item.get("color", "#31333F")
+            text = item.get("text", "")
+            st.markdown(
+                f"<div style='display: flex; align-items: center; margin-bottom: 6px;'>"
+                f"<span style='display: inline-block; width: 14px; height: 14px; background-color: {color}; margin-right: 8px; border-radius: 2px;'></span>"
+                f"<span style='font-size: 15px; color: #31333F;'>{text}</span>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
+    st.download_button(
+        label="⬇️ 下载趋势图 PNG",
+        data=st.session_state.plotted_fig_bytes,
+        file_name="unit_load_pressure_comparison.png",
+        mime="image/png",
+        type="primary"
+    )

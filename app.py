@@ -1019,7 +1019,7 @@ if st.session_state.plotted_fig_bytes:
 
 
 # ============================================================
-# 10. 云端历史图片按标签检索与调用专区（严格隔离方案与标签）
+# 10. 云端历史图片按标签检索与调用专区（严格隔离方案与标签，支持精准恢复原方案）
 # ============================================================
 st.markdown("---")
 st.subheader("☁️ 云端历史图片按标签检索与调用")
@@ -1060,7 +1060,7 @@ if r2_storage._get_r2_client() is not None:
                     key="sel_scheme"
                 )
                 
-                # 动态获取当前选中方案下拥有的负荷标签（实现方案之间互不干扰）
+                # 动态获取当前选中方案下拥有的负荷标签
                 available_tags = ["-- 请选择 --"]
                 if selected_scheme and selected_scheme != "-- 请选择 --":
                     available_tags += sorted(list(schemes_dict[selected_scheme].keys()))
@@ -1113,11 +1113,14 @@ if r2_storage._get_r2_client() is not None:
                             )
                         with act_c2:
                             if st.button("🗑️ 将此图片移入回收站", key="btn_del_cloud_img"):
-                                local_trash_path = os.path.join(CHART_TRASH_DIR, selected_file_name)
+                                # 在回收站路径中记录所属方案名，格式为 scheme_name___filename.png
+                                trash_composite_name = f"{active_scheme}___{selected_file_name}"
+                                local_trash_path = os.path.join(CHART_TRASH_DIR, trash_composite_name)
                                 with open(local_trash_path, "wb") as tf:
                                     tf.write(img_bytes)
-                                r2_storage.r2_upload_file(local_trash_path, key=f"chart_trash_vault/{selected_file_name}")
-                                # 仅精准删除当前方案目录下的该图片，绝不影响其他方案
+                                
+                                r2_storage.r2_upload_file(local_trash_path, key=f"chart_trash_vault/{trash_composite_name}")
+                                # 从原方案目录彻底清除
                                 r2_storage.r2_delete_key(target_key)
                                 
                                 st.session_state.pop("active_chart_key", None)
@@ -1133,7 +1136,7 @@ if r2_storage._get_r2_client() is not None:
         st.info("无法读取云端文件列表或存储桶为空。")
 
     # ============================================================
-    # 11. 图片回收站管理专区
+    # 11. 图片回收站管理专区（支持精准解析原方案名并恢复）
     # ============================================================
     trashed_charts = sorted(
         name for name in os.listdir(CHART_TRASH_DIR)
@@ -1143,25 +1146,40 @@ if r2_storage._get_r2_client() is not None:
         with st.expander("🗑️ 图片回收站（管理已删除的历史图片）", expanded=False):
             st.write("以下是被删除的历史图片，您可以选择恢复或彻底删除：")
             for t_img in trashed_charts:
+                # 解析保存的方案名与真实文件名
+                if "___" in t_img:
+                    orig_scheme, orig_filename = t_img.split("___", 1)
+                else:
+                    orig_scheme = "默认恢复方案"
+                    orig_filename = t_img
+
                 tc1, tc2, tc3 = st.columns([4, 1, 1])
                 with tc1:
-                    st.text(f"🖼️ {t_img}")
+                    st.text(f"🖼️ [{orig_scheme}] {orig_filename}")
                 with tc2:
                     if st.button("♻️ 恢复", key=f"restore_chart_{t_img}", use_container_width=True):
                         src_path = os.path.join(CHART_TRASH_DIR, t_img)
-                        dest_path = os.path.join(CHART_HISTORY_DIR, t_img)
-                        shutil.move(src_path, dest_path)
-                        r2_storage.r2_upload_file(dest_path, key=f"chart_history/默认恢复方案/{t_img}")
-                        r2_storage.r2_delete_key(f"chart_trash_vault/{t_img}")
-                        st.success(f"已成功恢复图片：{t_img}")
-                        st.rerun()
+                        dest_path = os.path.join(CHART_HISTORY_DIR, orig_filename)
+                        
+                        if os.path.exists(src_path):
+                            shutil.copy(src_path, dest_path)
+                            # 准确恢复到它原本所属的方案目录下
+                            r2_storage.r2_upload_file(dest_path, key=f"chart_history/{orig_scheme}/{orig_filename}")
+                            # 清理回收站中的记录
+                            os.remove(src_path)
+                            r2_storage.r2_delete_key(f"chart_trash_vault/{t_img}")
+                            if os.path.exists(dest_path):
+                                os.remove(dest_path) # 清理本地临时缓存
+                                
+                            st.success(f"已成功将图片恢复至原方案：“{orig_scheme}”！")
+                            st.rerun()
                 with tc3:
                     if st.button("🔥 彻底删除", key=f"perma_del_chart_{t_img}", use_container_width=True):
                         src_path = os.path.join(CHART_TRASH_DIR, t_img)
                         if os.path.exists(src_path):
                             os.remove(src_path)
                         r2_storage.r2_delete_key(f"chart_trash_vault/{t_img}")
-                        st.success(f"已从云端彻底删除图片：{t_img}")
+                        st.success(f"已从云端彻底删除图片：{orig_filename}")
                         st.rerun()
 else:
     st.info("请先配置并连接 Cloudflare R2 存储桶以使用云端图片检索功能。")

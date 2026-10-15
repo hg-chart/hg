@@ -164,6 +164,12 @@ if "plotted_title" not in st.session_state:
 if "plotted_periods_info" not in st.session_state:
     st.session_state.plotted_periods_info = []
 
+# 额外安全检查：如果没有选择任何时间段，立刻清空已有图表及提示状态
+if not st.session_state.intervals:
+    st.session_state.plotted_fig_bytes = None
+    st.session_state.plotted_title = ""
+    st.session_state.plotted_periods_info = []
+
 
 # ============================================================
 # 3. 上传及选择数据文件（保持页面极其干净简洁）
@@ -595,12 +601,20 @@ if st.session_state.intervals:
             else:
                 for idx in sorted(selected_indices, reverse=True):
                     st.session_state.intervals.pop(idx)
+                # 如果删空了，立即清除图表缓存
+                if not st.session_state.intervals:
+                    st.session_state.plotted_fig_bytes = None
+                    st.session_state.plotted_title = ""
+                    st.session_state.plotted_periods_info = []
                 st.success("已删除选中时段！")
                 st.rerun()
 
     with bcol6:
         if st.button("🗑️ 清空", use_container_width=True):
             st.session_state.intervals = []
+            st.session_state.plotted_fig_bytes = None
+            st.session_state.plotted_title = ""
+            st.session_state.plotted_periods_info = []
             st.success("已清空所有时段！")
             st.rerun()
 
@@ -705,6 +719,10 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
     if not threshold_valid:
         st.error("请先把负荷下限阈值修改为有效数字。")
     elif not st.session_state.intervals:
+        # 当没有选择任何时间段时，立刻清空旧图表及提示缓存，避免产生视觉混淆
+        st.session_state.plotted_fig_bytes = None
+        st.session_state.plotted_title = ""
+        st.session_state.plotted_periods_info = []
         st.warning("请至少添加一个对比时间段！")
     else:
         with st.spinner("正在处理多时段数据并绘图……"):
@@ -793,6 +811,9 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
 
                 if not plotted_periods:
                     st.warning("指定时间段和负荷阈值下均未检索到有效数据。")
+                    st.session_state.plotted_fig_bytes = None
+                    st.session_state.plotted_title = ""
+                    st.session_state.plotted_periods_info = []
                 else:
                     fig, ax1 = plt.subplots(figsize=(16, 8))
                     ax2 = ax1.twinx()
@@ -892,7 +913,7 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     plt.close(fig)
 
 # 持续渲染已保存的图表与图片外部带有颜色块的独立说明
-if st.session_state.plotted_fig_bytes is not None:
+if st.session_state.plotted_fig_bytes is not None and st.session_state.intervals:
     st.success("图表生成成功！")
     st.image(st.session_state.plotted_fig_bytes, caption=st.session_state.plotted_title, use_container_width=True)
     

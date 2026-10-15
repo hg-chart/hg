@@ -54,7 +54,6 @@ def _r2_bucket():
 
 def _r2_key(local_path_or_key):
     value = str(local_path_or_key).replace("\\", "/").lstrip("/")
-    # 如果传入的字符串已经包含了前缀，则直接返回，避免重复拼接
     if value.startswith(R2_PREFIX):
         return value
     return R2_PREFIX + value
@@ -109,30 +108,25 @@ def r2_list_keys():
 
 
 def sync_local_storage_with_r2(vault_dir, file_trash_dir, chart_history_dir):
-    """启动时同步：仅当本地没有该文件且不在回收站时，才从云端同步下载。"""
+    """启动时同步：仅从云端拉取文件到本地，彻底废除本地反向上传逻辑，防止已删除文件死灰复燃。"""
     client = _get_r2_client()
     if client is None:
         return False
+    
     remote_keys = r2_list_keys()
     if remote_keys is None:
         return False
+        
     remote_set = set(remote_keys)
-    local_dirs = [vault_dir, file_trash_dir, chart_history_dir]
-    
-    trash_files = set()
-    for d in [file_trash_dir, "chart_trash_vault"]:
-        if os.path.exists(d):
-            for p in Path(d).rglob("*"):
-                if p.is_file():
-                    trash_files.add(p.name)
 
+    # 1. 仅从云端下载本地没有的文件
     for remote_key in remote_keys:
         rel = remote_key[len(R2_PREFIX):]
         if not rel or rel.startswith("../") or "/../" in rel:
             continue
         
-        filename = Path(rel).name
-        if filename in trash_files or "trash" in remote_key:
+        # 排除回收站相关
+        if "trash" in remote_key:
             continue
 
         local_path = Path(rel)
@@ -143,12 +137,18 @@ def sync_local_storage_with_r2(vault_dir, file_trash_dir, chart_history_dir):
                 local_path.write_bytes(response["Body"].read())
             except Exception:
                 logging.exception("恢复 R2 文件失败：%s", rel)
-            
+
+    # 2. 清理本地多余文件：如果本地有文件，但云端 R2 已经删除了它，说明它是被废弃的旧文件，直接在本地物理删除！
+    local_dirs = [vault_dir, file_trash_dir, chart_history_dir]
     for folder in local_dirs:
         if os.path.exists(folder):
             for path in Path(folder).rglob("*"):
                 if path.is_file():
                     key = _r2_key(path.as_posix())
                     if key not in remote_set:
-                        r2_upload_file(path, path.as_posix())
+                        try:
+                            os.remove(path)
+                        except Exception:
+                            pass
+                            
     return True

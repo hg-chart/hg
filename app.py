@@ -849,7 +849,10 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
 
                     # 取消负荷网格线
                     ax1.grid(False)
-                    ax2.grid(False)
+                    
+                    # 开启右纵轴（压差轴）的网格线（横线），步长固定为 200
+                    ax2.yaxis.set_major_locator(ticker.MultipleLocator(200))
+                    ax2.grid(True, linestyle="--", alpha=0.5, color="gray")
 
                     max_xticks = 12
                     step = max(1, len(all_x_labels) // max_xticks)
@@ -918,7 +921,7 @@ if st.session_state.plotted_fig_bytes:
         st.markdown(f"📋 **各时段详细起止与配置说明（{current_threshold_str}）**", unsafe_allow_html=True)
         
         st.markdown(
-            "<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 12px;'>"
+            "<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 12px; text-align: center;'>"
             "<span style='color: #d93838; font-weight: bold; font-size: 16px;'>💡 提示：</span>"
             "<span style='font-weight: bold; font-size: 15px; color: #1f1f1f;'>面积图代表负荷，折线图代表压差</span>"
             "</div>",

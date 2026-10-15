@@ -54,6 +54,9 @@ def _r2_bucket():
 
 def _r2_key(local_path_or_key):
     value = str(local_path_or_key).replace("\\", "/").lstrip("/")
+    # 如果传入的字符串已经包含了前缀，则直接返回，避免重复拼接
+    if value.startswith(R2_PREFIX):
+        return value
     return R2_PREFIX + value
 
 
@@ -75,7 +78,8 @@ def r2_delete_key(key):
     if client is None:
         return False
     try:
-        client.delete_object(Bucket=_r2_bucket(), Key=_r2_key(key))
+        full_key = _r2_key(key)
+        client.delete_object(Bucket=_r2_bucket(), Key=full_key)
         return True
     except Exception as exc:
         logging.exception("删除 Cloudflare R2 对象失败：%s", exc)
@@ -105,7 +109,7 @@ def r2_list_keys():
 
 
 def sync_local_storage_with_r2(vault_dir, file_trash_dir, chart_history_dir):
-    """启动时双向补齐：云端已有对象优先下载；本地独有对象上传。"""
+    """启动时同步：仅当本地没有该文件且不在回收站时，才从云端同步下载。"""
     client = _get_r2_client()
     if client is None:
         return False
@@ -115,17 +119,30 @@ def sync_local_storage_with_r2(vault_dir, file_trash_dir, chart_history_dir):
     remote_set = set(remote_keys)
     local_dirs = [vault_dir, file_trash_dir, chart_history_dir]
     
+    trash_files = set()
+    for d in [file_trash_dir, "chart_trash_vault"]:
+        if os.path.exists(d):
+            for p in Path(d).rglob("*"):
+                if p.is_file():
+                    trash_files.add(p.name)
+
     for remote_key in remote_keys:
         rel = remote_key[len(R2_PREFIX):]
         if not rel or rel.startswith("../") or "/../" in rel:
             continue
+        
+        filename = Path(rel).name
+        if filename in trash_files or "trash" in remote_key:
+            continue
+
         local_path = Path(rel)
-        try:
-            local_path.parent.mkdir(parents=True, exist_ok=True)
-            response = client.get_object(Bucket=_r2_bucket(), Key=remote_key)
-            local_path.write_bytes(response["Body"].read())
-        except Exception:
-            logging.exception("恢复 R2 文件失败：%s", rel)
+        if not local_path.exists():
+            try:
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                response = client.get_object(Bucket=_r2_bucket(), Key=remote_key)
+                local_path.write_bytes(response["Body"].read())
+            except Exception:
+                logging.exception("恢复 R2 文件失败：%s", rel)
             
     for folder in local_dirs:
         if os.path.exists(folder):

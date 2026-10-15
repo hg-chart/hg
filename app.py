@@ -1019,7 +1019,7 @@ if st.session_state.plotted_fig_bytes:
 
 
 # ============================================================
-# 10. 云端历史图片按标签检索与调用专区（无感知一次性平铺显示）
+# 10. 云端历史图片按标签检索与调用专区（严格隔离方案与标签）
 # ============================================================
 st.markdown("---")
 st.subheader("☁️ 云端历史图片按标签检索与调用")
@@ -1034,7 +1034,6 @@ if r2_storage._get_r2_client() is not None:
         
         if chart_keys:
             schemes_dict = {}
-            global_load_tags = set()
             
             for k in chart_keys:
                 parts = k.split("/")
@@ -1050,20 +1049,26 @@ if r2_storage._get_r2_client() is not None:
                     else:
                         tag = filename.split(".")[0]
                     
+                    # 严格按 方案 ➔ 标签 ➔ 唯一云端路径 映射
                     schemes_dict[scheme][tag] = (filename, k)
-                    global_load_tags.add(tag)
             
             if schemes_dict:
-                # 两个下拉框平铺同时显示
+                # 1. 选择时间段方案大类
                 selected_scheme = st.selectbox(
                     "📁 选择时间段方案大类", 
                     ["-- 请选择 --"] + list(schemes_dict.keys()), 
                     key="sel_scheme"
                 )
                 
+                # 动态获取当前选中方案下拥有的负荷标签（实现方案之间互不干扰）
+                available_tags = ["-- 请选择 --"]
+                if selected_scheme and selected_scheme != "-- 请选择 --":
+                    available_tags += sorted(list(schemes_dict[selected_scheme].keys()))
+                
+                # 2. 选择负荷标签筛选
                 selected_tag = st.selectbox(
                     "🏷️ 选择负荷标签筛选", 
-                    ["-- 请选择 --"] + sorted(list(global_load_tags)), 
+                    available_tags, 
                     key="sel_tag"
                 )
                 
@@ -1112,11 +1117,11 @@ if r2_storage._get_r2_client() is not None:
                                 with open(local_trash_path, "wb") as tf:
                                     tf.write(img_bytes)
                                 r2_storage.r2_upload_file(local_trash_path, key=f"chart_trash_vault/{selected_file_name}")
-                                # 彻底从云端原路径删除
+                                # 仅精准删除当前方案目录下的该图片，绝不影响其他方案
                                 r2_storage.r2_delete_key(target_key)
                                 
                                 st.session_state.pop("active_chart_key", None)
-                                st.success("图片已成功移入云端/本地回收站，并从云端原目录彻底清除！")
+                                st.success("图片已成功移入云端/本地回收站，并从当前方案目录彻底清除！")
                                 st.rerun()
                     except Exception as e:
                         st.error(f"从云端加载图片失败：{e}")

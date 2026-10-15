@@ -368,7 +368,7 @@ if not columns:
 
 
 # ============================================================
-# 6. 数据列和负荷过滤（已硬卡死纠正压差列名）
+# 6. 数据列和负荷过滤
 # ============================================================
 
 st.subheader("2. 数据列选择配置")
@@ -378,19 +378,12 @@ default_load_index = min(1, len(columns) - 1)
 if "W3.UNIT1.10DEHDCSAI03" in columns:
     default_load_index = columns.index("W3.UNIT1.10DEHDCSAI03")
 
-# 强制将默认压差列指向正确的 10CP201F（彻底防止选错成 20CP201F）
-default_pressure_index = min(2, len(columns) - 1)
-for i, c in enumerate(columns):
-    if "10CP201F" in c or "AHTE10CP201F" in c:
-        default_pressure_index = i
-        break
-
 with col1:
     time_col = st.selectbox("横坐标轴（时间列）", columns, index=0)
 with col2:
     load_col = st.selectbox("负荷左纵轴", columns, index=default_load_index)
 with col3:
-    pressure_col = st.selectbox("压差右纵轴", columns, index=default_pressure_index)
+    pressure_col = st.selectbox("压差右纵轴", columns, index=min(2, len(columns) - 1))
 
 st.subheader("3. 负荷过滤配置（可选）")
 threshold_text = st.text_input("负荷下限阈值（留空则使用全部负荷数据）", value="")
@@ -717,17 +710,12 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
             try:
                 df = df_raw.copy()
 
-                # 确保压差列准确映射为 10CP201F 而非 20CP201F
-                correct_aliases = {
-                    "压差": "W3.FW.AHTE10CP201F",
-                    "负荷": "W3.UNIT1.10DEHDCSAI03",
-                }
                 rename_map = {
-                    col: correct_aliases[col]
+                    col: COLUMN_ALIASES[col]
                     for col in df.columns
-                    if col in correct_aliases
+                    if col in COLUMN_ALIASES
                 }
-                df = df.rename(columns=correct_aliases)
+                df = df.rename(columns=COLUMN_ALIASES)
                 actual_time_col = rename_map.get(time_col, time_col)
                 actual_load_col = rename_map.get(load_col, load_col)
                 actual_pressure_col = rename_map.get(pressure_col, pressure_col)
@@ -848,9 +836,42 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax1.set_ylabel(f"负荷（{actual_load_col}）", fontsize=12, color="black")
                     ax2.set_ylabel(f"压差（{actual_pressure_col}）", fontsize=12, color="black")
 
-                    # 完全采用默认行为，取消强制网格线
+                    # 取消默认网格线
                     ax1.grid(False)
                     ax2.grid(False)
+
+                    # ============================================================
+                    # 【核心彻底修正】：右纵轴上限绝对不虚高，精准贴合真实最大值 p_max！
+                    # ============================================================
+                    all_pressure_values = []
+                    for period in plotted_periods:
+                        all_pressure_values.extend(period["data"][actual_pressure_col].dropna().tolist())
+
+                    if all_pressure_values:
+                        p_min = min(all_pressure_values)
+                        p_max = max(all_pressure_values)
+                        
+                        st.info(f"📊 压差实际数值校验：当前时段内压差最小值 = {p_min:.2f}，最大值 = {p_max:.2f}")
+
+                        p_lower = max(0, int(p_min // 100) * 100)
+                        p_upper = float(p_max)  # 绝不盲目取整，精准贴合真实最大值！
+                        if p_lower >= p_upper:
+                            p_upper = p_lower + 100
+
+                        # 关闭自动缩放，死死锁死在 p_max 上
+                        ax2.set_autoscaley_on(False)
+                        ax2.set_ylim(p_lower, p_upper)
+
+                        span = p_upper - p_lower
+                        if span <= 500:
+                            step = 50
+                        elif span <= 1500:
+                            step = 100
+                        else:
+                            step = 200
+
+                        ax2.yaxis.set_major_locator(ticker.MultipleLocator(step))
+                        ax2.grid(True, linestyle="--", linewidth=0.7, alpha=0.5, color="grey")
 
                     total_points = len(all_x_labels)
                     tick_step = max(1, total_points // 10)

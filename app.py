@@ -841,11 +841,28 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax2.grid(False)
 
                     # ============================================================
-                    # 采用 Matplotlib 干净的原生 Locator 机制：
-                    # 设定 200 步长，只显示偶数刻度与对应的网格参考线，彻底消除重影
+                    # 【核心修正】：完全基于所选时段内实际的压差数据范围来确定右纵轴刻度
+                    # 避免硬编码死数值，绝不瞎编虚高
                     # ============================================================
-                    ax2.yaxis.set_major_locator(ticker.MultipleLocator(200))
-                    ax2.grid(True, linestyle="--", linewidth=0.7, alpha=0.5, color="grey")
+                    all_pressure_values = []
+                    for period in plotted_periods:
+                        all_pressure_values.extend(period["data"][actual_pressure_col].dropna().tolist())
+
+                    if all_pressure_values:
+                        p_min = min(all_pressure_values)
+                        p_max = max(all_pressure_values)
+                        # 动态计算合适的上下边界（向下/向上圆整并留出适当边距）
+                        p_lower = max(0, int(p_min // 100) * 100)
+                        p_upper = int((p_max // 100) + 1) * 100
+                        if p_lower == p_upper:
+                            p_upper += 200
+                        ax2.set_ylim(p_lower, p_upper)
+                        
+                        # 根据实际跨度自适应选择合理的刻度步长（如 100、200 或 500 等）
+                        span = p_upper - p_lower
+                        step = 200 if span > 1000 else 100
+                        ax2.yaxis.set_major_locator(ticker.MultipleLocator(step))
+                        ax2.grid(True, linestyle="--", linewidth=0.7, alpha=0.5, color="grey")
 
                     total_points = len(all_x_labels)
                     tick_step = max(1, total_points // 10)

@@ -12,7 +12,7 @@ import streamlit as st
 import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib import font_manager, ticker
+from matplotlib import font_manager
 
 
 # ============================================================
@@ -156,6 +156,7 @@ if "trash_bin" not in st.session_state:
 if "intervals" not in st.session_state:
     st.session_state.intervals = []
 
+# 用于保存图表渲染状态，防止下载后图表消失
 if "plotted_fig_bytes" not in st.session_state:
     st.session_state.plotted_fig_bytes = None
 if "plotted_title" not in st.session_state:
@@ -163,6 +164,7 @@ if "plotted_title" not in st.session_state:
 if "plotted_periods_info" not in st.session_state:
     st.session_state.plotted_periods_info = []
 
+# 额外安全检查：如果没有选择任何时间段，立刻清空已有图表及提示状态
 if not st.session_state.intervals:
     st.session_state.plotted_fig_bytes = None
     st.session_state.plotted_title = ""
@@ -170,7 +172,7 @@ if not st.session_state.intervals:
 
 
 # ============================================================
-# 3. 上传及选择数据文件
+# 3. 上传及选择数据文件（保持页面极其干净简洁）
 # ============================================================
 
 st.subheader("1. 表格文件管理（支持上传和调用历史文件）")
@@ -181,6 +183,7 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True,
 )
 
+# 修改 Upload 按钮的 CSS 样式显示为“上传文件”
 st.markdown(
     """
     <style>
@@ -222,12 +225,14 @@ existing_files = sorted(
 
 active_paths = []
 if existing_files:
+    # 按照您的要求，将原标题修改为“选择需要分析的文件”
     with st.expander("📁 选择需要分析的文件", expanded=True):
         st.write("请在下方勾选本次分析所需的文件：")
 
         if "file_selections" not in st.session_state:
             st.session_state.file_selections = {}
 
+        # 同步初始化文件选择状态
         for name in existing_files:
             if name not in st.session_state.file_selections:
                 st.session_state.file_selections[name] = True
@@ -245,10 +250,11 @@ if existing_files:
 
         active_paths = [os.path.join(VAULT_DIR, name) for name in selected_files]
 
+    # 将“当前已选择 X 个文件参与分析。”放到原批量删除按钮的位置
     st.success(f"当前已选择 {len(active_paths)} 个文件参与分析。")
 
 # ============================================================
-# 4. 文件删除与回收站管理
+# 4. 单独设置的“文件删除与回收站管理”折叠栏
 # ============================================================
 with st.expander("🗑️ 文件删除与回收站管理（如需清理历史文件请展开）", expanded=False):
     st.write("勾选不需要的文件进行批量删除，删除后的文件可随时在下方回收站恢复：")
@@ -287,6 +293,7 @@ with st.expander("🗑️ 文件删除与回收站管理（如需清理历史文
     else:
         st.info("当前文件库中暂无文件。")
 
+    # 文件回收站管理模块
     trashed_files = sorted(
         name for name in os.listdir(FILE_TRASH_DIR)
         if name.lower().endswith((".csv", ".xlsx", ".xls"))
@@ -374,6 +381,7 @@ if not columns:
 st.subheader("2. 数据列选择配置")
 col1, col2, col3 = st.columns(3)
 
+# 默认负荷左纵轴为 W3.UNIT1.10DEHDCSAI03（如果存在于列中）
 default_load_index = min(1, len(columns) - 1)
 if "W3.UNIT1.10DEHDCSAI03" in columns:
     default_load_index = columns.index("W3.UNIT1.10DEHDCSAI03")
@@ -399,11 +407,12 @@ if threshold_text.strip():
 
 
 # ============================================================
-# 7. 机组运行数据时间段选择
+# 7. 机组运行数据时间段选择（统一命名与回收站）
 # ============================================================
 
-st.markdown("### 4. 机组运行数据时间段选择 <span style='color:red; font-size:18px;'>（必选）</span>", unsafe_allow_html=True)
+st.subheader("4. 机组运行数据时间段选择")
 
+# 生成带有起止时间标注的选项列表（X 列表）
 template_options = {}
 for name, intervals_list in st.session_state.saved_templates.items():
     if intervals_list and isinstance(intervals_list, list):
@@ -417,6 +426,7 @@ for name, intervals_list in st.session_state.saved_templates.items():
 if template_options:
     options_list = list(template_options.keys())
     
+    # 每一行展示：选择下拉框、确认按钮、删除按钮
     for opt_label in options_list:
         actual_key = template_options[opt_label]
         sc1, sc2, sc3 = st.columns([5, 1, 1])
@@ -431,8 +441,10 @@ if template_options:
                 st.rerun()
         with sc3:
             if st.button("删除", key=f"delete_{actual_key}", use_container_width=True):
+                # 放入回收站
                 st.session_state.trash_bin[actual_key] = st.session_state.saved_templates[actual_key]
                 save_trash_bin(st.session_state.trash_bin)
+                # 从活动方案中移除
                 del st.session_state.saved_templates[actual_key]
                 save_persistent_templates(st.session_state.saved_templates)
                 st.success(f"已将 {actual_key} 移入回收站。")
@@ -440,6 +452,7 @@ if template_options:
 else:
     st.info("暂无可用的时间段方案。")
 
+# 回收站管理模块
 if st.session_state.trash_bin:
     with st.expander("🗑️ 回收站（防止误删除）", expanded=False):
         st.write("以下是被删除的时间段方案，您可以选择恢复或彻底删除：")
@@ -469,6 +482,7 @@ if st.session_state.trash_bin:
 
 st.markdown("---")
 
+# 1. 先在上方展示已添加的对比时段表格及管理按钮区
 if st.session_state.intervals:
     st.write("当前已选择的时间段（图表按此顺序依次排列）。勾选“选择”后，可在下方修改、上移/下移或删除：")
 
@@ -587,6 +601,7 @@ if st.session_state.intervals:
             else:
                 for idx in sorted(selected_indices, reverse=True):
                     st.session_state.intervals.pop(idx)
+                # 如果删空了，立即清除图表缓存
                 if not st.session_state.intervals:
                     st.session_state.plotted_fig_bytes = None
                     st.session_state.plotted_title = ""
@@ -605,6 +620,7 @@ if st.session_state.intervals:
 
     st.markdown("---")
 
+# 自动衔接时间计算
 default_start = datetime.now()
 if st.session_state.intervals:
     try:
@@ -626,6 +642,9 @@ else:
 
 default_end = default_start + timedelta(minutes=50)
 
+# ============================================================
+# 2. 放在下方的“添加新时段”表单
+# ============================================================
 with st.container(border=True):
     st.markdown("➕ **添加新时段**（自动智能衔接，支持秒级精准配置）")
     with st.form("interval_form"):
@@ -700,6 +719,7 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
     if not threshold_valid:
         st.error("请先把负荷下限阈值修改为有效数字。")
     elif not st.session_state.intervals:
+        # 当没有选择任何时间段时，立刻清空旧图表及提示缓存，避免产生视觉混淆
         st.session_state.plotted_fig_bytes = None
         st.session_state.plotted_title = ""
         st.session_state.plotted_periods_info = []
@@ -836,10 +856,8 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax1.set_ylabel(f"负荷（{actual_load_col}）", fontsize=12, color="black")
                     ax2.set_ylabel(f"压差（{actual_pressure_col}）", fontsize=12, color="black")
 
-                    # 完全移除原先对右纵轴强加的各种死板限制和步长计算
-                    # 左右纵轴全部采用 Matplotlib 默认行为，取消强制网格线
-                    ax1.grid(False)
-                    ax2.grid(False)
+                    ax1.grid(True, axis="y", linestyle="-", linewidth=0.6, alpha=0.35)
+                    ax1.set_axisbelow(True)
 
                     total_points = len(all_x_labels)
                     tick_step = max(1, total_points // 10)
@@ -894,10 +912,12 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                 if fig is not None:
                     plt.close(fig)
 
+# 持续渲染已保存的图表与图片外部带有颜色块的独立说明
 if st.session_state.plotted_fig_bytes is not None and st.session_state.intervals:
     st.success("图表生成成功！")
     st.image(st.session_state.plotted_fig_bytes, caption=st.session_state.plotted_title, use_container_width=True)
     
+    # 纯文字独立标注区域（带图表对应颜色标记块）
     with st.container(border=True):
         st.markdown("📋 **【查看专用】各时段详细起止与配置说明**（下载图片时不会包含此段文字）：")
         for info_item in st.session_state.plotted_periods_info:

@@ -12,7 +12,7 @@ import streamlit as st
 import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib import font_manager
+from matplotlib import font_manager, ticker
 
 
 # ============================================================
@@ -368,7 +368,7 @@ if not columns:
 
 
 # ============================================================
-# 6. 数据列和负荷过滤（已彻底修复默认列误选漏洞）
+# 6. 数据列和负荷过滤
 # ============================================================
 
 st.subheader("2. 数据列选择配置")
@@ -378,19 +378,12 @@ default_load_index = min(1, len(columns) - 1)
 if "W3.UNIT1.10DEHDCSAI03" in columns:
     default_load_index = columns.index("W3.UNIT1.10DEHDCSAI03")
 
-# 【绝对安全防错】：自动智能锁定正确的 10CP201F 压差测点，绝不盲目取 index=2 选错列
-default_pressure_index = min(2, len(columns) - 1)
-for i, c in enumerate(columns):
-    if "10CP201F" in c or "AHTE10CP201F" in c:
-        default_pressure_index = i
-        break
-
 with col1:
     time_col = st.selectbox("横坐标轴（时间列）", columns, index=0)
 with col2:
     load_col = st.selectbox("负荷左纵轴", columns, index=default_load_index)
 with col3:
-    pressure_col = st.selectbox("压差右纵轴", columns, index=default_pressure_index)
+    pressure_col = st.selectbox("压差右纵轴", columns, index=min(2, len(columns) - 1))
 
 st.subheader("3. 负荷过滤配置（可选）")
 threshold_text = st.text_input("负荷下限阈值（留空则使用全部负荷数据）", value="")
@@ -409,7 +402,7 @@ if threshold_text.strip():
 # 7. 机组运行数据时间段选择
 # ============================================================
 
-st.subheader("4. 机组运行数据时间段选择")
+st.markdown("### 4. 机组运行数据时间段选择 <span style='color:red; font-size:18px;'>（必选）</span>", unsafe_allow_html=True)
 
 template_options = {}
 for name, intervals_list in st.session_state.saved_templates.items():
@@ -717,10 +710,15 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
             try:
                 df = df_raw.copy()
 
-                # 根据下拉框实际选择的列名（pressure_col）直接作为压差源数据
-                actual_time_col = time_col
-                actual_load_col = load_col
-                actual_pressure_col = pressure_col
+                rename_map = {
+                    col: COLUMN_ALIASES[col]
+                    for col in df.columns
+                    if col in COLUMN_ALIASES
+                }
+                df = df.rename(columns=COLUMN_ALIASES)
+                actual_time_col = rename_map.get(time_col, time_col)
+                actual_load_col = rename_map.get(load_col, load_col)
+                actual_pressure_col = rename_map.get(pressure_col, pressure_col)
 
                 required = [actual_time_col, actual_load_col, actual_pressure_col]
                 missing = [col for col in required if col not in df.columns]
@@ -838,9 +836,16 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     ax1.set_ylabel(f"负荷（{actual_load_col}）", fontsize=12, color="black")
                     ax2.set_ylabel(f"压差（{actual_pressure_col}）", fontsize=12, color="black")
 
-                    # 完全采用函数默认缩放行为，取消强制网格线
+                    # 取消负荷网格线
                     ax1.grid(False)
                     ax2.grid(False)
+
+                    # ============================================================
+                    # 采用 Matplotlib 干净的原生 Locator 机制：
+                    # 设定 200 步长，只显示偶数刻度与对应的网格参考线，彻底消除重影
+                    # ============================================================
+                    ax2.yaxis.set_major_locator(ticker.MultipleLocator(200))
+                    ax2.grid(True, linestyle="--", linewidth=0.7, alpha=0.5, color="grey")
 
                     total_points = len(all_x_labels)
                     tick_step = max(1, total_points // 10)

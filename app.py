@@ -1,5 +1,27 @@
 # -*- coding: utf-8 -*-
 """设备运行数据多文件多时段汇总对比分析系统"""
+import streamlit as st
+
+# 必须紧跟在 st.set_page_config 之后或代码最上方
+st.set_page_config(page_title="设备运行数据分析系统", layout="wide")
+
+# 强制隐藏右上角工具栏及 GitHub 图标
+st.markdown(
+    """
+    <style>
+    /* 隐藏右上角工具栏 */
+    div[data-testid="stToolbar"] {
+        visibility: hidden;
+        display: none !important;
+    }
+    /* 隐藏页脚的 "Made with Streamlit"（可选） */
+    footer {
+        visibility: hidden;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 import os
 import json

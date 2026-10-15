@@ -166,7 +166,7 @@ if "plotted_periods_info" not in st.session_state:
 
 
 # ============================================================
-# 3. 上传及选择数据文件（带文件列表选择、批量删除与回收站恢复）
+# 3. 上传及选择数据文件（保持页面极其干净简洁）
 # ============================================================
 
 st.subheader("1. 表格文件管理（支持上传和调用历史文件）")
@@ -219,8 +219,9 @@ existing_files = sorted(
 
 active_paths = []
 if existing_files:
-    with st.expander("📁 文件库（勾选本次分析所需文件，或进行批量删除）", expanded=True):
-        st.write("请在下方勾选参与分析的文件，或勾选后进行批量删除：")
+    # 按照您的要求，将原标题修改为“选择需要分析的文件”
+    with st.expander("📁 选择需要分析的文件", expanded=True):
+        st.write("请在下方勾选本次分析所需的文件：")
 
         if "file_selections" not in st.session_state:
             st.session_state.file_selections = {}
@@ -241,38 +242,60 @@ if existing_files:
             with fc2:
                 st.text(f"📄 {name}")
 
-        # 调整按钮和提示的位置
-        b_c1, b_c2 = st.columns([2, 2])
-        with b_c1:
-            if st.button("🗑️ 批量删除选中文件"):
-                deleted_any = False
-                for name, is_sel in list(st.session_state.file_selections.items()):
-                    if is_sel:
-                        src_path = os.path.join(VAULT_DIR, name)
-                        dst_path = os.path.join(FILE_TRASH_DIR, name)
-                        if os.path.exists(src_path):
-                            shutil.move(src_path, dst_path)
-                            deleted_any = True
-                if deleted_any:
-                    st.success("已将选中的文件移入回收站！")
-                    st.rerun()
-                else:
-                    st.warning("请先勾选需要删除的文件。")
-
-        with b_c2:
-            st.write("") # 保持排版美观
-
         active_paths = [os.path.join(VAULT_DIR, name) for name in selected_files]
 
-# 文件回收站管理模块
-trashed_files = sorted(
-    name for name in os.listdir(FILE_TRASH_DIR)
-    if name.lower().endswith((".csv", ".xlsx", ".xls"))
-)
+    # 将“当前已选择 X 个文件参与分析。”放到原批量删除按钮的位置
+    st.success(f"当前已选择 {len(active_paths)} 个文件参与分析。")
 
-if trashed_files:
-    with st.expander("🗑️ 文件回收站（防止误删除）", expanded=False):
-        st.write("以下是被删除的表格文件，您可以选择恢复或彻底删除：")
+# ============================================================
+# 4. 单独设置的“文件删除与回收站管理”折叠栏
+# ============================================================
+with st.expander("🗑️ 文件删除与回收站管理（如需清理历史文件请展开）", expanded=False):
+    st.write("勾选不需要的文件进行批量删除，删除后的文件可随时在下方回收站恢复：")
+    
+    if existing_files:
+        if "file_del_selections" not in st.session_state:
+            st.session_state.file_del_selections = {}
+            
+        for name in existing_files:
+            if name not in st.session_state.file_del_selections:
+                st.session_state.file_del_selections[name] = False
+                
+        for name in existing_files:
+            dc1, dc2 = st.columns([0.1, 0.9])
+            with dc1:
+                d_sel = st.checkbox("删除选择", value=st.session_state.file_del_selections.get(name, False), key=f"file_del_chk_{name}", label_visibility="collapsed")
+                st.session_state.file_del_selections[name] = d_sel
+            with dc2:
+                st.text(f"📄 {name}")
+
+        if st.button("🗑️ 批量删除选中的文件"):
+            deleted_any = False
+            for name, is_sel in list(st.session_state.file_del_selections.items()):
+                if is_sel:
+                    src_path = os.path.join(VAULT_DIR, name)
+                    dst_path = os.path.join(FILE_TRASH_DIR, name)
+                    if os.path.exists(src_path):
+                        shutil.move(src_path, dst_path)
+                        st.session_state.file_del_selections[name] = False
+                        deleted_any = True
+            if deleted_any:
+                st.success("已将选中的文件移入回收站！")
+                st.rerun()
+            else:
+                st.warning("请先勾选需要删除的文件。")
+    else:
+        st.info("当前文件库中暂无文件。")
+
+    # 文件回收站管理模块
+    trashed_files = sorted(
+        name for name in os.listdir(FILE_TRASH_DIR)
+        if name.lower().endswith((".csv", ".xlsx", ".xls"))
+    )
+
+    if trashed_files:
+        st.markdown("---")
+        st.markdown("♻️ **文件回收站**")
         for trash_name in trashed_files:
             tc1, tc2, tc3 = st.columns([4, 1, 1])
             with tc1:
@@ -298,12 +321,9 @@ if not active_paths:
     st.info("请先上传或选择 CSV、Excel 数据文件。")
     st.stop()
 
-# 将“当前已选择 X 个文件参与分析。”放到原批量删除按钮的位置
-st.success(f"当前已选择 {len(active_paths)} 个文件参与分析。")
-
 
 # ============================================================
-# 4. 读取 CSV / Excel
+# 5. 读取 CSV / Excel
 # ============================================================
 
 try:
@@ -349,7 +369,7 @@ if not columns:
 
 
 # ============================================================
-# 5. 数据列和负荷过滤
+# 6. 数据列和负荷过滤
 # ============================================================
 
 st.subheader("2. 数据列选择配置")
@@ -381,7 +401,7 @@ if threshold_text.strip():
 
 
 # ============================================================
-# 6. 机组运行数据时间段选择（统一命名与回收站）
+# 7. 机组运行数据时间段选择（统一命名与回收站）
 # ============================================================
 
 st.subheader("4. 机组运行数据时间段选择")
@@ -678,7 +698,7 @@ st.markdown("---")
 
 
 # ============================================================
-# 7. 生成多时段趋势图
+# 8. 生成多时段趋势图
 # ============================================================
 
 if st.button("🚀 开始生成多时段对比趋势图", type="primary"):

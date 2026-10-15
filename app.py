@@ -85,7 +85,7 @@ TRASH_FILE = os.path.join(VAULT_DIR, "trash_vault.json")
 
 def default_templates():
     return {
-        "时间段1": [
+        "监测数据时间段1": [
             {"start": "2026-08-01 01:01:00", "end": "2026-08-05 01:01:50", "run_sec": "0", "stop_sec": "-"},
             {"start": "2026-09-19 01:01:50", "end": "2026-09-25 13:09:50", "run_sec": "0", "stop_sec": "-"},
             {"start": "2026-09-25 13:10:50", "end": "2026-09-29 13:09:50", "run_sec": "30", "stop_sec": "780"},
@@ -102,7 +102,14 @@ def load_persistent_templates():
             with open(TEMPLATES_FILE, "r", encoding="utf-8") as file:
                 data = json.load(file)
             if isinstance(data, dict):
-                return data
+                # 兼容老数据：把旧名称自动规范化为“监测数据时间段X”
+                normalized_data = {}
+                idx = 1
+                for k, v in data.items():
+                    key_name = k if k.startswith("监测数据时间段") else f"监测数据时间段{idx}"
+                    normalized_data[key_name] = v
+                    idx += 1
+                return normalized_data
         except Exception:
             logging.exception("读取历史时段方案失败，将使用默认方案。")
     return default_templates()
@@ -284,7 +291,7 @@ if threshold_text.strip():
 
 
 # ============================================================
-# 6. 机组运行数据时间段选择（含删除按钮、自动时间段命名与回收站）
+# 6. 机组运行数据时间段选择（统一命名与回收站）
 # ============================================================
 
 st.subheader("4. 机组运行数据时间段选择")
@@ -416,17 +423,17 @@ if st.session_state.intervals:
             if not st.session_state.intervals:
                 st.warning("当前没有时段，无法保存。")
             else:
-                # 自动生成名称：时间段1、时间段2...
+                # 自动生成名称：监测数据时间段1、监测数据时间段2...
                 existing_nums = []
                 for k in st.session_state.saved_templates.keys():
-                    if k.startswith("时间段"):
+                    if k.startswith("监测数据时间段"):
                         try:
-                            num = int(k.replace("时间段", ""))
+                            num = int(k.replace("监测数据时间段", ""))
                             existing_nums.append(num)
                         except ValueError:
                             pass
                 next_num = max(existing_nums) + 1 if existing_nums else 1
-                new_name = f"时间段{next_num}"
+                new_name = f"监测数据时间段{next_num}"
                 
                 st.session_state.saved_templates[new_name] = [
                     dict(item) for item in st.session_state.intervals
@@ -668,7 +675,10 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                         "line_color": line_color,
                         "description": description,
                     })
-                    periods_detailed_info.append(f"时段 {index + 1}：{description}")
+                    periods_detailed_info.append({
+                        "text": f"监测数据时间段 {index + 1}：{description}",
+                        "color": fill_color
+                    })
 
                 st.info("🔍 各时段数据检索诊断：" + " | ".join(diagnostics))
 
@@ -739,8 +749,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
 
                     ax1.set_title(title, fontsize=15, pad=16)
 
-                    # 为了避免图片下方图例文字过小，在图像本身不画过于拥挤的图例文字，
-                    # 仅保留基础图例或精简图例，具体的详细时间段在图片外部文字显示
                     handles1, labels1 = ax1.get_legend_handles_labels()
                     handles2, labels2 = ax2.get_legend_handles_labels()
                     ax1.legend(
@@ -774,16 +782,25 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                 if fig is not None:
                     plt.close(fig)
 
-# 持续渲染已保存的图表与图片外部的独立大字说明
+# 持续渲染已保存的图表与图片外部带有颜色块的独立说明
 if st.session_state.plotted_fig_bytes is not None:
     st.success("图表生成成功！")
     st.image(st.session_state.plotted_fig_bytes, caption=st.session_state.plotted_title, use_container_width=True)
     
-    # 纯文字独立标注区域（不在下载图片内，专门用于手机/电脑清晰查看）
+    # 纯文字独立标注区域（带图表对应颜色标记块）
     with st.container(border=True):
         st.markdown("📋 **【查看专用】各时段详细起止与配置说明**（下载图片时不会包含此段文字）：")
         for info_item in st.session_state.plotted_periods_info:
-            st.markdown(f"- {info_item}")
+            color_hex = info_item["color"]
+            text_content = info_item["text"]
+            # 用 HTML 渲染一个小色块，旁边紧跟文字说明
+            st.markdown(
+                f"<div style='display: flex; align-items: center; margin-bottom: 6px;'>"
+                f"<span style='display: inline-block; width: 16px; height: 16px; background-color: {color_hex}; margin-right: 8px; border-radius: 3px; border: 1px solid #ccc;'></span>"
+                f"<span style='font-size: 15px;'>{text_content}</span>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
 
     st.download_button(
         "⬇️ 下载趋势图 PNG",

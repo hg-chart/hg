@@ -649,7 +649,7 @@ with st.container(border=True):
         with ec3:
             end_minute = st.number_input("分 ", min_value=0, max_value=59, value=default_end.minute, key="e_m")
         with ec4:
-            end_second = st.number_input("秒 ", min_value=0, max_value=59, value=default_end.second, key="e_s")
+            end_second = st.number_input("秒 ", min_value=0, max_value=59, value=default_end.second, key="s_s")
 
         run_col, stop_col, btn_col = st.columns([2, 2, 1.5])
         with run_col:
@@ -773,13 +773,18 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     run_value = interval.get("run_sec", "0")
                     stop_value = interval.get("stop_sec", "-")
                     
-                    # 规则1：如果多频集速运行秒数为0或0.0，显示“多频集速没有运行”
                     if run_value in ("0", "0.0"):
                         config_str = "多频集速没有运行"
                     else:
                         config_str = f"多频集速运行{run_value}s/停止{stop_value}s"
 
-                    description = f"{config_str} (实际 {actual_start} ~ {actual_end})"
+                    # 动态生成前缀说明文字
+                    if threshold is not None:
+                        time_prefix = f"负荷≥{threshold}，机组实际运行时间"
+                    else:
+                        time_prefix = "全部负荷，机组实际运行时间"
+
+                    description = f"{config_str} ({time_prefix} {actual_start} ~ {actual_end})"
 
                     plotted_periods.append({
                         "data": part,
@@ -857,7 +862,6 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     lines1, labels1 = ax1.get_legend_handles_labels()
                     lines2, labels2 = ax2.get_legend_handles_labels()
                     
-                    # 确保左侧全部是负荷，右侧全部是压差
                     combined_lines = lines1 + lines2
                     combined_labels = labels1 + labels2
 
@@ -901,11 +905,9 @@ if st.session_state.plotted_fig_bytes:
     st.image(st.session_state.plotted_fig_bytes, use_container_width=True)
 
     with st.container(border=True):
-        # 规则2：更新各时段详细起止与配置说明的标题，带上当前负荷阈值
         current_threshold_str = f"负荷≥{threshold}" if threshold is not None else "全部负荷"
         st.markdown(f"📋 **各时段详细起止与配置说明（{current_threshold_str}）**", unsafe_allow_html=True)
         
-        # 规则3：让“面积图代表负荷，折线图代表压差”更加醒目
         st.markdown(
             "<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 12px;'>"
             "<span style='color: #d93838; font-weight: bold; font-size: 16px;'>💡 提示：</span>"

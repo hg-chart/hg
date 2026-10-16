@@ -719,7 +719,7 @@ with st.container(border=True):
         with run_col:
             run_seconds = st.text_input("多频集速运行秒数", value="30")
         with stop_col:
-            stop_seconds = st.text_input("停止秒数（运行秒数若为0，此项不用填）", value="780")
+            stop_seconds = st.text_input("停止秒数（运行秒数若为0，此项自动为-）", value="780")
         with btn_col:
             st.write("")
             add_interval = st.form_submit_button("添加时段", use_container_width=True)

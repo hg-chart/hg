@@ -6,10 +6,17 @@ import logging
 from pathlib import Path
 import streamlit as st
 
-R2_PREFIX = "device-monitor/"
+BASE_PREFIX = "device-monitor/"
 _R2_CLIENT = None
 _R2_READY = False
 _R2_ERROR = ""
+
+
+def _get_active_prefix():
+    """根据当前 session_state 中选中的集团与工厂动态生成 R2 存储前缀"""
+    group = st.session_state.get("selected_group", "DefaultGroup")
+    factory = st.session_state.get("selected_factory", "DefaultFactory")
+    return f"{BASE_PREFIX}{group}/{factory}/"
 
 
 def _get_r2_client():
@@ -54,9 +61,10 @@ def _r2_bucket():
 
 def _r2_key(local_path_or_key):
     value = str(local_path_or_key).replace("\\", "/").lstrip("/")
-    if value.startswith(R2_PREFIX):
+    current_prefix = _get_active_prefix()
+    if value.startswith(current_prefix):
         return value
-    return R2_PREFIX + value
+    return current_prefix + value
 
 
 def r2_upload_file(local_path, key=None):
@@ -92,8 +100,9 @@ def r2_list_keys():
     try:
         keys = []
         token = None
+        current_prefix = _get_active_prefix()
         while True:
-            kwargs = {"Bucket": _r2_bucket(), "Prefix": R2_PREFIX}
+            kwargs = {"Bucket": _r2_bucket(), "Prefix": current_prefix}
             if token:
                 kwargs["ContinuationToken"] = token
             response = client.list_objects_v2(**kwargs)
@@ -108,7 +117,7 @@ def r2_list_keys():
 
 
 def sync_local_storage_with_r2(vault_dir, file_trash_dir, chart_history_dir):
-    """启动时同步：仅从云端拉取文件到本地，彻底废除本地反向上传逻辑，防止已删除文件死灰复燃。"""
+    """启动时同步：仅从云端拉取当前集团/工厂的文件到本地"""
     client = _get_r2_client()
     if client is None:
         return False
@@ -118,27 +127,30 @@ def sync_local_storage_with_r2(vault_dir, file_trash_dir, chart_history_dir):
         return False
         
     remote_set = set(remote_keys)
+    current_prefix = _get_active_prefix()
 
     # 1. 仅从云端下载本地没有的文件
     for remote_key in remote_keys:
-        rel = remote_key[len(R2_PREFIX):]
+        rel = remote_key[len(current_prefix):]
         if not rel or rel.startswith("../") or "/../" in rel:
             continue
         
-        # 排除回收站相关
         if "trash" in remote_key:
             continue
 
-        local_path = Path(rel)
-        if not local_path.exists():
+        local_path = Path(vault_dir) / rel if not rel.startswith(vault_dir) else Path(rel)
+        # 兼容处理
+        local_target = Path(rel.split("/")[-1]) if "/" in rel else Path(rel)
+        # 简化为直接在当前vault下按文件名恢复
+        if not local_target.exists():
             try:
-                local_path.parent.mkdir(parents=True, exist_ok=True)
+                local_target.parent.mkdir(parents=True, exist_ok=True)
                 response = client.get_object(Bucket=_r2_bucket(), Key=remote_key)
-                local_path.write_bytes(response["Body"].read())
+                local_target.write_bytes(response["Body"].read())
             except Exception:
                 logging.exception("恢复 R2 文件失败：%s", rel)
 
-    # 2. 清理本地多余文件：如果本地有文件，但云端 R2 已经删除了它，说明它是被废弃的旧文件，直接在本地物理删除！
+    # 2. 清理本地多余文件
     local_dirs = [vault_dir, file_trash_dir, chart_history_dir]
     for folder in local_dirs:
         if os.path.exists(folder):

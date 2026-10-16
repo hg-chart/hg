@@ -74,7 +74,7 @@ authenticator = stauth.Authenticate(
 )
 
 name, authentication_status, username = authenticator.login(
-    "请登录设备运行数据分析系统", "main"
+    "请登录设备运行数据分析系统", location="main"
 )
 
 if authentication_status == False:

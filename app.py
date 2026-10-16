@@ -153,6 +153,57 @@ current_user = st.session_state["user_db"]["credentials"]["usernames"][
 user_role = current_user.get("role", "user")
 allowed_factories = current_user.get("allowed_factories", [])
 
+# ------------------------------------------------------------
+# 侧边栏显示 / 隐藏开关（隐藏后整屏用于操作与看图）
+# 说明：侧边栏控件始终渲染（保证工厂选择状态不丢失），仅用 CSS 隐藏
+# ------------------------------------------------------------
+if "sidebar_visible" not in st.session_state:
+  st.session_state["sidebar_visible"] = True
+
+
+def _set_sidebar_visible(flag):
+  st.session_state["sidebar_visible"] = flag
+
+
+if st.session_state["sidebar_visible"]:
+  st.sidebar.button(
+      "◀ 隐藏管理栏",
+      key="btn_hide_sidebar",
+      on_click=_set_sidebar_visible,
+      args=(False,),
+      use_container_width=True,
+  )
+else:
+  st.markdown(
+      """
+      <style>
+      body section[data-testid="stSidebar"] { display: none !important; }
+      body .main .block-container,
+      body [data-testid="stMainBlockContainer"],
+      body div.block-container {
+          padding-left: 0.5rem !important;
+          padding-right: 0.5rem !important;
+          padding-top: 3rem !important;
+      }
+      /* “显示”按钮悬浮在左上角，不占用页面布局 */
+      .st-key-btn_show_sidebar {
+          position: fixed !important;
+          top: 0.5rem !important;
+          left: 0.5rem !important;
+          width: auto !important;
+          z-index: 1000000 !important;
+      }
+      </style>
+      """,
+      unsafe_allow_html=True,
+  )
+  st.button(
+      "☰ 工厂、人员管理",
+      key="btn_show_sidebar",
+      on_click=_set_sidebar_visible,
+      args=(True,),
+  )
+
 # 模块一：用户与密码管理模块
 user_manager.render_user_management(username, user_role, authenticator)
 

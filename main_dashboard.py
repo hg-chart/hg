@@ -126,15 +126,15 @@ if not columns:
     st.error("所选文件没有可用的数据列。")
     st.stop()
 
-# 模块三（后半部分）：数据列和负荷过滤配置
-time_col, load_col, pressure_col, threshold, threshold_valid = data_processor.render_column_and_filter_config(columns)
+# 模块三（后半部分）：数据列和负荷区间过滤配置（接收 6 个返回值）
+time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid = data_processor.render_column_and_filter_config(columns)
 
 # 模块四：运行时间段方案管理
 time_intervals_manager.render_time_intervals_manager(VAULT_DIR, df_raw, time_col)
 
-# 模块五：图表绘制、预览与下载
+# 模块五：图表绘制、预览与下载（传入区间上下限及校验状态）
 chart_generator.render_chart_generator(
-    df_raw, time_col, load_col, pressure_col, threshold, threshold_valid
+    df_raw, time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid
 )
 
 # 模块六：云端历史图表检索、查看及回收站管理

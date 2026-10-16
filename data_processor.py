@@ -51,7 +51,7 @@ def load_and_process_data(active_paths):
 
 
 def render_column_and_filter_config(columns):
-    """渲染数据列选择和负荷过滤配置"""
+    """渲染数据列选择和负荷区间过滤配置"""
     st.subheader("2. 数据列选择配置")
     col1, col2, col3 = st.columns(3)
 
@@ -66,16 +66,34 @@ def render_column_and_filter_config(columns):
     with col3:
         pressure_col = st.selectbox("右纵轴（压差）请选择数据来源", columns, index=min(2, len(columns) - 1))
 
-    st.subheader("3. 负荷过滤配置（可选）")
-    threshold_text = st.text_input("负荷下限阈值（留空则使用全部负荷数据）", value="")
-    threshold = None
-    threshold_valid = True
+    st.subheader("3. 负荷过滤配置（可选：支持单值下限或闭区间）")
+    f_col1, f_col2 = st.columns(2)
+    with f_col1:
+        min_threshold_text = st.text_input("负荷下限阈值（留空则不限制下限）", value="")
+    with f_col2:
+        max_threshold_text = st.text_input("负荷上限阈值（留空则只做大于等于下限过滤）", value="")
 
-    if threshold_text.strip():
+    min_threshold = None
+    max_threshold = None
+    filter_valid = True
+
+    if min_threshold_text.strip():
         try:
-            threshold = float(threshold_text.strip())
+            min_threshold = float(min_threshold_text.strip())
         except ValueError:
-            threshold_valid = False
+            filter_valid = False
             st.error("负荷下限必须是数字，例如 240。")
 
-    return time_col, load_col, pressure_col, threshold, threshold_valid
+    if max_threshold_text.strip():
+        try:
+            max_threshold = float(max_threshold_text.strip())
+        except ValueError:
+            filter_valid = False
+            st.error("负荷上限必须是数字，例如 250。")
+
+    if filter_valid and min_threshold is not None and max_threshold is not None:
+        if min_threshold > max_threshold:
+            filter_valid = False
+            st.error("负荷下限不能大于上限！")
+
+    return time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid

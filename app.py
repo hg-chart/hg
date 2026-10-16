@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """设备运行数据分析系统 - 工厂安全隔离路由网关入口"""
 
-import importlib
 import inspect
 import os
+import runpy
 import shutil
-import sys
 import streamlit as st
 import streamlit_authenticator as stauth
 
@@ -163,7 +162,7 @@ except Exception:
     shutil.copytree(factory_vault, standard_vault, dirs_exist_ok=True)
 
 # ============================================================
-# 5. 安全防御：拦截重复的 set_page_config，并每次重跑时动态执行主脚本
+# 5. 安全防御：拦截重复的 set_page_config，并以沙箱隔离方式运行主脚本
 # ============================================================
 original_set_page_config = st.set_page_config
 
@@ -175,8 +174,7 @@ def safe_set_page_config(*args, **kwargs):
 st.set_page_config = safe_set_page_config
 
 try:
-  import main_dashboard
-
-  importlib.reload(main_dashboard)
+  # 使用 runpy 独立安全地执行原版 main_dashboard.py，彻底杜绝 ID 冲突和缓存污染
+  runpy.run_path("main_dashboard.py", run_name="__main__")
 finally:
   st.set_page_config = original_set_page_config

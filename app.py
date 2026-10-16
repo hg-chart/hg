@@ -10,7 +10,7 @@ import streamlit_authenticator as stauth
 import r2_storage
 
 # ============================================================
-#  页面外观与【强力缓存绞杀】配置
+#  页面外观与【强锁侧边栏视觉】配置
 # ============================================================
 st.set_page_config(
     page_title="设备运行数据分析系统", 
@@ -24,33 +24,27 @@ st.markdown(
     /* 隐藏右上角工具栏与页脚 */
     div[data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
     footer { visibility: hidden !important; }
+
+    /* 【视觉强锁】：无论浏览器缓存怎么认为它收起了，直接用 CSS 强行把侧边栏拉出来并固定在左侧！ */
+    section[data-testid="stSidebar"] {
+        display: block !important;
+        visibility: visible !important;
+        transform: none !important;
+        width: 320px !important;
+        min-width: 320px !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        height: 100vh !important;
+        z-index: 999999 !important;
+    }
+
+    /* 调整主内容区左边距，防止被强行固定的侧边栏遮挡 */
+    .main .block-container {
+        padding-left: 350px !important;
+        padding-right: 2rem !important;
+    }
     </style>
-
-    <script>
-    // 【终极缓存绞杀脚本】：在 Streamlit 前端读取缓存前，强行干掉并重置侧边栏折叠记忆
-    (function() {
-        try {
-            // 1. 精准遍历并清除所有包含 sidebar / nav / collapse 的本地缓存
-            const keysToRemove = [];
-            for (let i = 0; i < localStorage.length; i++) {
-                const key = localStorage.key(i);
-                if (key && (key.toLowerCase().includes('sidebar') || key.toLowerCase().includes('collapse') || key.toLowerCase().includes('nav'))) {
-                    keysToRemove.push(key);
-                }
-            }
-            keysToRemove.forEach(k => localStorage.removeItem(k));
-
-            // 2. 强行将主流的 Streamlit 侧边栏状态键设为展开
-            localStorage.setItem('stSidebarState', 'expanded');
-            localStorage.setItem('sidebarState', 'expanded');
-            
-            // 3. 如果有 sessionStorage 也一并清理
-            sessionStorage.clear();
-        } catch (e) {
-            console.log("Cache clear error: ", e);
-        }
-    })();
-    </script>
     """,
     unsafe_allow_html=True,
 )

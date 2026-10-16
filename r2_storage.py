@@ -13,10 +13,8 @@ _R2_ERROR = ""
 
 
 def _get_active_prefix():
-    """根据当前 session_state 中选中的集团与工厂动态生成 R2 存储前缀"""
-    group = st.session_state.get("selected_group", "DefaultGroup")
-    factory = st.session_state.get("selected_factory", "DefaultFactory")
-    return f"{BASE_PREFIX}{group}/{factory}/"
+    """直接返回当前设置的 BASE_PREFIX（例如 device-monitor/shanxihg/）"""
+    return BASE_PREFIX
 
 
 def _get_r2_client():
@@ -117,7 +115,7 @@ def r2_list_keys():
 
 
 def sync_local_storage_with_r2(vault_dir, file_trash_dir, chart_history_dir):
-    """启动时同步：仅从云端拉取当前集团/工厂的文件到本地"""
+    """启动时同步：仅从云端拉取当前工厂的文件到本地"""
     client = _get_r2_client()
     if client is None:
         return False
@@ -138,10 +136,7 @@ def sync_local_storage_with_r2(vault_dir, file_trash_dir, chart_history_dir):
         if "trash" in remote_key:
             continue
 
-        local_path = Path(vault_dir) / rel if not rel.startswith(vault_dir) else Path(rel)
-        # 兼容处理
-        local_target = Path(rel.split("/")[-1]) if "/" in rel else Path(rel)
-        # 简化为直接在当前vault下按文件名恢复
+        local_target = Path(vault_dir) / rel if not rel.startswith(vault_dir) else Path(rel)
         if not local_target.exists():
             try:
                 local_target.parent.mkdir(parents=True, exist_ok=True)

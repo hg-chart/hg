@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 import streamlit as st
 
-# 动态前缀默认值
 BASE_PREFIX = "device-monitor/shanxihg/"
 _R2_CLIENT = None
 _R2_READY = False
@@ -14,7 +13,6 @@ _R2_ERROR = ""
 
 
 def _get_active_prefix():
-  """确保任何时候都直接且实时返回当前最新的 BASE_PREFIX"""
   global BASE_PREFIX
   if not BASE_PREFIX.endswith("/"):
     BASE_PREFIX += "/"
@@ -22,7 +20,6 @@ def _get_active_prefix():
 
 
 def _get_r2_client():
-  """延迟创建 R2 S3 兼容客户端，避免将凭据写入代码。"""
   global _R2_CLIENT, _R2_READY, _R2_ERROR
   if _R2_CLIENT is not None:
     return _R2_CLIENT
@@ -127,7 +124,7 @@ def r2_list_keys():
 
 
 def sync_local_storage_with_r2(vault_dir, file_trash_dir, chart_history_dir):
-  """启动时同步：精准从当前工厂的云端目录拉取文件到本地"""
+  """终极健壮版同步：直接将该前缀下的所有有效数据文件下载到本地 vault_dir"""
   client = _get_r2_client()
   if client is None:
     return False
@@ -136,25 +133,26 @@ def sync_local_storage_with_r2(vault_dir, file_trash_dir, chart_history_dir):
   if remote_keys is None:
     return False
 
-  remote_set = set(remote_keys)
-  current_prefix = _get_active_prefix()
+  os.makedirs(vault_dir, exist_ok=True)
 
-  # 1. 仅从云端下载本地没有的文件
   for remote_key in remote_keys:
-    rel = remote_key[len(current_prefix) :]
-    if not rel or rel.startswith("../") or "/../" in rel:
+    # 过滤掉文件夹本身和回收站、图表历史
+    if remote_key.endswith("/") or "trash" in remote_key or "chart_history" in remote_key:
       continue
 
-    if "trash" in remote_key:
+    # 提取纯文件名（例如 device-monitor/shanxihg/abc.csv -> abc.csv）
+    file_name = remote_key.split("/")[-1]
+    if not file_name or not file_name.lower().endswith((".csv", ".xlsx", ".xls", ".json")):
       continue
 
-    local_target = Path(vault_dir) / rel if not rel.startswith(vault_dir) else Path(rel)
-    if not local_target.exists():
-      try:
-        local_target.parent.mkdir(parents=True, exist_ok=True)
-        response = client.get_object(Bucket=_r2_bucket(), Key=remote_key)
-        local_target.write_bytes(response["Body"].read())
-      except Exception:
-        logging.exception("恢复 R2 文件失败：%s", rel)
+    local_target = Path(vault_dir) / file_name
+
+    # 如果本地没有或者大小为0，则从云端拉取
+    try:
+      response = client.get_object(Bucket=_r2_bucket(), Key=remote_key)
+      file_bytes = response["Body"].read()
+      local_target.write_bytes(file_bytes)
+    except Exception as exc:
+      logging.exception("下载 R2 文件出错: %s", exc)
 
   return True

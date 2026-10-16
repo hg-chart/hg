@@ -73,11 +73,8 @@ authenticator = stauth.Authenticate(
     auto_hash=False,
 )
 
-# 使用标准的 UI 标题替代 login 的文本参数，完美兼容各版本 authenticator
-st.title("🔐 设备运行数据分析系统 - 请登录")
-
-# 纯净调用 login，只传渲染位置
-name, authentication_status, username = authenticator.login("main")
+# 已修复：使用无参形式适配最新版 authenticator.login()
+name, authentication_status, username = authenticator.login()
 
 if authentication_status == False:
   st.error("❌ 用户名或密码错误")

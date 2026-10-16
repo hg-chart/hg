@@ -38,7 +38,7 @@ def _get_r2_client():
     import boto3
     from botocore.config import Config
 
-    _R2_CLIENT = boto3.client(
+    client = boto3.client(
         "s3",
         endpoint_url=endpoint,
         aws_access_key_id=access_key,
@@ -49,6 +49,28 @@ def _get_r2_client():
             retries={"max_attempts": 3, "mode": "standard"},
         ),
     )
+
+    # 【终极底层拦截魔法】：
+    # 动态劫持 boto3 客户端的 get_object 和 delete_object 方法。
+    # 无论任何外部模块（包括原版 main_dashboard.py）传入什么奇奇怪怪的带虚拟前缀的 Key，
+    # 在真正发给 R2 服务器之前，全部在这里被自动清洗并转化为正确的绝对路径！
+    orig_get_object = client.get_object
+    def safe_get_object(*args, **kwargs):
+        if "Key" in kwargs:
+            k = kwargs["Key"]
+            kwargs["Key"] = _r2_key(k)
+        return orig_get_object(*args, **kwargs)
+    client.get_object = safe_get_object
+
+    orig_delete_object = client.delete_object
+    def safe_delete_object(*args, **kwargs):
+        if "Key" in kwargs:
+            k = kwargs["Key"]
+            kwargs["Key"] = _r2_key(k)
+        return orig_delete_object(*args, **kwargs)
+    client.delete_object = safe_delete_object
+
+    _R2_CLIENT = client
     _R2_READY = True
     _R2_ERROR = ""
     return _R2_CLIENT
@@ -67,17 +89,21 @@ def _r2_bucket():
 
 
 def _r2_key(local_path_or_key):
-  # 任何时候都确保返回包含当前工厂前缀的绝对真实 R2 Key
+  """万能路径清洗函数：安全去除所有冗余前缀和虚拟标签，拼出完美的真实 R2 Key"""
   value = str(local_path_or_key).replace("\\", "/").lstrip("/")
-  current_prefix = _get_active_prefix()
   
-  # 如果前端传进来的 key 包含了多余的层级，进行安全清洗
-  if value.startswith("dummy/"):
-    value = value[len("dummy/"):]
-    
+  # 剥离可能存在的各种虚拟前缀
+  for prefix_to_strip in ["x/", "dummy/", "device-monitor/shanxihg/"]:
+      # 注意：只有当后面确实包含关键路径时才剥离，避免误杀
+      if value.startswith(prefix_to_strip) and not value == prefix_to_strip:
+          # 如果已经包含了当前工厂前缀，先剥离干净再重新拼接
+          value = value[len(prefix_to_strip):]
+
+  current_prefix = _get_active_prefix()
+  # 如果清理后已经是完整前缀开头，直接返回
   if value.startswith(current_prefix):
-    return value
-  return current_prefix + value
+      return value
+  return current_prefix + value.lstrip("/")
 
 
 def r2_upload_file(local_path, key=None):
@@ -98,13 +124,7 @@ def r2_delete_key(key):
   if client is None:
     return False
   try:
-    # 彻底清理掉可能带有的虚拟前缀
-    cleaned_key = str(key)
-    if cleaned_key.startswith("dummy/"):
-      cleaned_key = cleaned_key[len("dummy/"):]
-    full_key = _r2_key(cleaned_key)
-    
-    client.delete_object(Bucket=_r2_bucket(), Key=full_key)
+    client.delete_object(Bucket=_r2_bucket(), Key=key)
     return True
   except Exception as exc:
     logging.exception("删除 Cloudflare R2 对象失败：%s", exc)
@@ -129,11 +149,7 @@ def r2_list_keys():
         k = item["Key"]
         if k.startswith(current_prefix):
           rel = k[len(current_prefix):]
-          # 【完美对齐原版索引】：
-          # 原版代码通过 parts = k.split("/") 来取方案名和文件名。
-          # 我们直接返回形如 "x/chart_history/方案名/文件名" 的格式，
-          # 这样 parts[0]="x", parts[1]="chart_history", parts[2]=方案名, parts[3]=文件名，
-          # 且当用这个 key 去调用 GetObject 时，我们在下面重写了安全的映射逻辑！
+          # 完美配合原版 main_dashboard.py 的 parts[2] 方案名、parts[3] 文件名索引
           if "chart_history/" in rel:
             k_adjusted = "x/" + rel
           else:

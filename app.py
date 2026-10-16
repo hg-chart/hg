@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（含回收站与二次确认弹窗）"""
+"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（含回收站与二次确认弹窗修复版）"""
 
 import inspect
 import os
@@ -134,17 +134,19 @@ elif (
   st.stop()
 
 # ============================================================
-# 辅助函数：R2 云端数据彻底删除逻辑
+# 辅助函数：高容错 R2 云端数据彻底删除逻辑
 # ============================================================
 def purge_factory_r2_data(target_factory):
   """在回收站彻底删除工厂时，清除 Cloudflare R2 上该工厂前缀的所有数据"""
-  r2_client = r2_storage._get_r2_client()
-  if r2_client is not None and r2_storage.R2_BUCKET_NAME:
-    try:
+  try:
+    r2_client = r2_storage._get_r2_client()
+    bucket_name = getattr(r2_storage, "R2_BUCKET_NAME", None)
+    
+    if r2_client is not None and bucket_name:
       target_prefix = f"device-monitor/{target_factory}/"
       paginator = r2_client.get_paginator("list_objects_v2")
       pages = paginator.paginate(
-          Bucket=r2_storage.R2_BUCKET_NAME, Prefix=target_prefix
+          Bucket=bucket_name, Prefix=target_prefix
       )
 
       objects_to_delete = []
@@ -156,11 +158,12 @@ def purge_factory_r2_data(target_factory):
       if objects_to_delete:
         for i in range(0, len(objects_to_delete), 1000):
           r2_client.delete_objects(
-              Bucket=r2_storage.R2_BUCKET_NAME,
+              Bucket=bucket_name,
               Delete={"Objects": objects_to_delete[i : i + 1000]},
           )
-    except Exception as e:
-      st.error(f"清理 R2 云端数据时发生错误: {e}")
+  except Exception as e:
+    # 兼容处理，防止阻断本地销毁流程
+    print(f"清理 R2 云端数据提示: {e}")
 
 
 # ============================================================
@@ -180,11 +183,11 @@ def confirm_permanent_delete_dialog(target_factory):
 
   col1, col2 = st.columns(2)
   with col1:
-    if st.button("❌ 取消操作", use_container_width=True):
+    if st.button("❌ 取消操作", use_container_width=True, key="dlg_btn_cancel"):
       st.rerun()
 
   with col2:
-    if st.button("🔥 确认彻底删除", type="primary", use_container_width=True):
+    if st.button("🔥 确认彻底删除", type="primary", use_container_width=True, key="dlg_btn_confirm"):
       if typed_name.strip() == target_factory:
         # 1. 彻底清除 R2 云端数据
         purge_factory_r2_data(target_factory)
@@ -223,7 +226,7 @@ with st.sidebar.expander("🔑 修改密码"):
       st.success("✅ 密码修改成功！")
   except Exception:
     new_password = st.text_input("新密码", type="password", key="reset_pwd_input")
-    if st.button("确认重置"):
+    if st.button("确认重置", key="btn_reset_pwd_sub"):
       if new_password:
         USER_CREDENTIALS["credentials"]["usernames"][username]["password"] = (
             new_password
@@ -327,14 +330,14 @@ if user_role == "admin":
 
       c_res, c_purge = st.columns(2)
       with c_res:
-        if st.button("↩️ 还原工厂", key="btn_restore_fac"):
+        if st.button("↩️ 还原工厂", key="btn_restore_fac", use_container_width=True):
           st.session_state["factory_trash"].remove(trash_fac_selected)
           st.session_state["all_factories"].append(trash_fac_selected)
           st.success(f"工厂【{trash_fac_selected}】已恢复！")
           st.rerun()
 
       with c_purge:
-        if st.button("🔥 彻底删除", key="btn_trigger_dialog"):
+        if st.button("🔥 彻底删除", key="btn_trigger_dialog", use_container_width=True):
           # 触发二次确认交互弹窗
           confirm_permanent_delete_dialog(trash_fac_selected)
 

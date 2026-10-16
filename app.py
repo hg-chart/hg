@@ -11,7 +11,7 @@ import streamlit_authenticator as stauth
 import r2_storage
 
 # ============================================================
-#  页面外观与【全屏拉满、消除右侧留白】配置
+#  页面外观与【全局无死角铺满 + 图片强制全宽】配置
 # ============================================================
 st.set_page_config(
     page_title="设备运行数据分析系统",
@@ -22,17 +22,17 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    /* 隐藏右上角工具栏与页脚 */
+    /* 1. 隐藏右上角工具栏与页脚 */
     div[data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
     footer { visibility: hidden !important; }
 
-    /* 侧边栏视觉强锁与固定定位 */
+    /* 2. 侧边栏视觉强锁与固定定位 */
     section[data-testid="stSidebar"] {
         display: block !important;
         visibility: visible !important;
         transform: none !important;
-        width: 320px !important;
-        min-width: 320px !important;
+        width: 300px !important;
+        min-width: 300px !important;
         position: fixed !important;
         top: 0 !important;
         left: 0 !important;
@@ -40,26 +40,63 @@ st.markdown(
         z-index: 999999 !important;
     }
 
-    /* 恢复并置顶渲染收起/展开按钮 */
+    /* 3. 恢复并置顶渲染收起/展开按钮 */
     [data-testid="collapsedControl"], button[kind="header"] {
         display: block !important;
         visibility: visible !important;
         z-index: 1000000 !important;
     }
 
-    /* 【核心修复】：彻底解除最大宽度限制，让右侧留白区域全部用于图片和内容显示 */
-    .main .block-container {
+    /* 4.【终极打破右侧留白】：覆盖所有 Streamlit 主界面各层级容器的最大宽度 */
+    .main, 
+    .main .block-container,
+    [data-testid="stMainBlockContainer"],
+    [data-testid="stAppViewBlockContainer"],
+    [data-testid="stVerticalBlock"] {
         max-width: 100% !important;
-        width: calc(100% - 340px) !important;
-        margin-left: 320px !important;
-        padding-left: 2rem !important;
-        padding-right: 2rem !important;
-        padding-top: 1.5rem !important;
+        width: calc(100% - 320px) !important;
+        margin-left: 300px !important;
+        padding-left: 1.5rem !important;
+        padding-right: 1.5rem !important;
+        padding-top: 1rem !important;
+    }
+
+    /* 5. 强制内部所有图片容器及元素 100% 填满主区域 */
+    [data-testid="stImage"] img,
+    [data-testid="stImage"],
+    .stImage {
+        width: 100% !important;
+        max-width: 100% !important;
+        object-fit: contain !important;
+    }
+
+    /* 6. 强制表单与输入框组件等元素同步铺满 */
+    [data-testid="stForm"],
+    div[data-testid="stSelectbox"],
+    div[data-testid="stMultiSelect"] {
+        width: 100% !important;
+        max-width: 100% !important;
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+# ============================================================
+# 0.5 动态劫持 st.image，在不修改 main_dashboard.py 的前提下强制图片全屏宽展
+# ============================================================
+_original_st_image = st.image
+
+def _patched_st_image(*args, **kwargs):
+    # 强制注入 use_container_width=True 或 use_column_width=True
+    if "use_container_width" not in kwargs and "use_column_width" not in kwargs:
+        try:
+            kwargs["use_container_width"] = True
+        except Exception:
+            kwargs["use_column_width"] = True
+    return _original_st_image(*args, **kwargs)
+
+st.image = _patched_st_image
 
 # ============================================================
 # 1. 多工厂与权限字典配置

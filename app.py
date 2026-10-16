@@ -3,23 +3,24 @@
 
 import streamlit as st
 import inspect
-import os
 import runpy
-import shutil
 import streamlit_authenticator as stauth
 
-# 1. 导入 r2_storage 模块
-import r2_storage
+# 导入独立模块
+import sidebar_manager
 
 # ============================================================
-# 0. 页面外观与基础配置（强制清除侧边栏折叠缓存并锁定展开）
+# 0. 页面外观与基础配置
 # ============================================================
-st.set_page_config(page_title="设备运行数据分析系统", layout="wide")
+st.set_page_config(
+    page_title="设备运行数据分析系统", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 st.markdown(
     """
     <style>
-    /* 隐藏右上角工具栏与页脚 */
     div[data-testid="stToolbar"] {
         visibility: hidden;
         display: none !important;
@@ -27,53 +28,26 @@ st.markdown(
     footer {
         visibility: hidden;
     }
-
-    /* 强制锁定侧边栏样式：永久显示，不准收缩 */
-    section[data-testid="stSidebar"] {
-        width: 320px !important;
-        transform: none !important;
-        visibility: visible !important;
-    }
-
-    /* 彻底隐藏收起折叠按钮，杜绝用户误触 */
-    button[kind="header"], [data-testid="collapsedControl"] {
-        display: none !important;
-        visibility: hidden !important;
-    }
     </style>
-
-    <script>
-    // 主动清除浏览器本地记录的侧边栏折叠缓存，并强制恢复展开
-    try {
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key && key.includes('sidebarState')) {
-                localStorage.setItem(key, '"expanded"');
-            }
-        }
-    } catch (e) {}
-    </script>
     """,
     unsafe_allow_html=True,
 )
 
 # ============================================================
-# 1. 多工厂与权限字典配置（直接使用明文密码，开启自动哈希）
+# 1. 多工厂与权限字典配置
 # ============================================================
-ALL_FACTORIES = ["shanxihg", "太原分厂", "华东一厂", "华东二厂"]
-
 USER_CREDENTIALS = {
     "credentials": {
         "usernames": {
             "admin": {
                 "name": "超级管理员",
-                "password": "123456",  # 启用 auto_hash=True 后，系统会自动加密
+                "password": "123456",
                 "role": "admin",
                 "allowed_factories": "ALL",
             },
             "shanxi_user": {
                 "name": "山西红光厂长",
-                "password": "123456",  # 启用 auto_hash=True 后，系统会自动加密
+                "password": "123456",
                 "role": "user",
                 "allowed_factories": ["shanxihg"],
             },
@@ -86,7 +60,6 @@ USER_CREDENTIALS = {
     },
 }
 
-# 关键：开启 auto_hash=True，让库自动处理明文密码的加密校验
 authenticator = stauth.Authenticate(
     USER_CREDENTIALS["credentials"],
     USER_CREDENTIALS["cookie"]["name"],
@@ -128,78 +101,24 @@ elif (
   st.stop()
 
 # ============================================================
-# 3. 侧边栏：极简工厂选择与隔离
+# 3. 调用独立模块渲染侧边栏与工厂隔离
 # ============================================================
-current_user = USER_CREDENTIALS["credentials"]["usernames"][username]
-user_role = current_user.get("role", "user")
-allowed_factories = current_user.get("allowed_factories", [])
-
-st.sidebar.title("🔐 会话信息")
-st.sidebar.write(f"当前用户：**{name}**")
-authenticator.logout("退出登录", "sidebar")
-st.sidebar.markdown("---")
-
-st.sidebar.title("🏭 工厂工作区")
-
-if user_role == "admin" or allowed_factories == "ALL":
-  selected_factory = st.sidebar.selectbox("选择目标工厂", ALL_FACTORIES)
-else:
-  selected_factory = st.sidebar.selectbox("选择当前工厂", allowed_factories)
-
-st.sidebar.success(f"已连接工作区：\n**{selected_factory}**")
-st.sidebar.markdown("---")
+selected_factory = sidebar_manager.render_sidebar(
+    authenticator, name, username, USER_CREDENTIALS
+)
 
 # ============================================================
-# 4. 动态设置 R2 路径并同步，同时无损桥接本地目录
-# ============================================================
-r2_prefix = f"device-monitor/{selected_factory}/"
-r2_storage.BASE_PREFIX = r2_prefix
-
-factory_vault = f"uploaded_vault_{selected_factory}"
-factory_trash = f"file_trash_{selected_factory}"
-factory_chart = f"chart_history_{selected_factory}"
-
-os.makedirs(factory_vault, exist_ok=True)
-os.makedirs(factory_trash, exist_ok=True)
-os.makedirs(factory_chart, exist_ok=True)
-
-if r2_storage._get_r2_client() is not None:
-  sync_key = f"_r2_synced_{selected_factory}"
-  if not st.session_state.get(sync_key, False):
-    with st.spinner(f"正在加载 [{selected_factory}] 的云端数据..."):
-      r2_storage.sync_local_storage_with_r2(
-          factory_vault, factory_trash, factory_chart
-      )
-    st.session_state[sync_key] = True
-
-# 将当前工厂的文件夹镜像映射给原版 main_dashboard.py 默认读取的文件夹名
-standard_vault = "uploaded_vault"
-if os.path.lexists(standard_vault):
-  if os.path.islink(standard_vault) or os.path.isfile(standard_vault):
-    os.unlink(standard_vault)
-  else:
-    shutil.rmtree(standard_vault)
-
-try:
-  os.symlink(factory_vault, standard_vault, target_is_directory=True)
-except Exception:
-  if os.path.exists(factory_vault):
-    shutil.copytree(factory_vault, standard_vault, dirs_exist_ok=True)
-
-# ============================================================
-# 5. 安全防御：拦截重复的 set_page_config，并以沙箱隔离方式运行主脚本
+# 4. 安全防御：拦截重复的 set_page_config，并以沙箱隔离方式运行主脚本
 # ============================================================
 original_set_page_config = st.set_page_config
-
 
 def safe_set_page_config(*args, **kwargs):
   pass  # 吞掉重复的配置调用，防止白屏
 
-
 st.set_page_config = safe_set_page_config
 
 try:
-  # 使用 runpy 独立安全地执行原版 main_dashboard.py，彻底杜绝 ID 冲突和缓存污染
+  # 使用 runpy 独立安全地执行原版 main_dashboard.py
   runpy.run_path("main_dashboard.py", run_name="__main__")
 finally:
   st.set_page_config = original_set_page_config

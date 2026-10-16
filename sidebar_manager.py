@@ -7,27 +7,29 @@ import streamlit as st
 import r2_storage
 
 def render_sidebar(authenticator, name, username, user_credentials):
-    """渲染并接管侧边栏的所有交互与状态隔离"""
-    current_user = user_credentials["credentials"]["usernames"][username]
-    user_role = current_user.get("role", "user")
-    allowed_factories = current_user.get("allowed_factories", [])
-    all_factories = ["shanxihg", "太原分厂", "华东一厂", "华东二厂"]
+    """强制在绝对左侧渲染并接管侧边栏"""
+    
+    # 强制激活侧边栏上下文
+    with st.sidebar:
+        st.title("🔐 会话信息")
+        st.write(f"当前用户：**{name}**")
+        authenticator.logout("退出登录", "sidebar")
+        st.markdown("---")
 
-    # 强制在侧边栏顶部渲染会话与退出按钮
-    st.sidebar.title("🔐 会话信息")
-    st.sidebar.write(f"当前用户：**{name}**")
-    authenticator.logout("退出登录", "sidebar")
-    st.sidebar.markdown("---")
+        st.title("🏭 工厂工作区")
 
-    st.sidebar.title("🏭 工厂工作区")
+        current_user = user_credentials["credentials"]["usernames"][username]
+        user_role = current_user.get("role", "user")
+        allowed_factories = current_user.get("allowed_factories", [])
+        all_factories = ["shanxihg", "太原分厂", "华东一厂", "华东二厂"]
 
-    if user_role == "admin" or allowed_factories == "ALL":
-        selected_factory = st.sidebar.selectbox("选择目标工厂", all_factories, key="sidebar_factory_select_admin")
-    else:
-        selected_factory = st.sidebar.selectbox("选择当前工厂", allowed_factories, key="sidebar_factory_select_user")
+        if user_role == "admin" or allowed_factories == "ALL":
+            selected_factory = st.selectbox("选择目标工厂", all_factories, key="sidebar_factory_select_admin")
+        else:
+            selected_factory = st.selectbox("选择当前工厂", allowed_factories, key="sidebar_factory_select_user")
 
-    st.sidebar.success(f"已连接工作区：\n**{selected_factory}**")
-    st.sidebar.markdown("---")
+        st.success(f"已连接工作区：\n**{selected_factory}**")
+        st.markdown("---")
 
     # 绑定当前工厂的 R2 前缀与本地文件夹隔离
     r2_prefix = f"device-monitor/{selected_factory}/"

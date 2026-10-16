@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
 """设备运行数据多文件多时段汇总对比分析系统"""
+def render_dashboard(selected_factory):
+    # 将你原来定义本地文件夹路径的地方，改成根据 selected_factory 动态生成：
+    VAULT_DIR = f"uploaded_vault_{selected_factory}"
+    FILE_TRASH_DIR = f"file_trash_{selected_factory}"
+    CHART_HISTORY_DIR = f"chart_history_{selected_factory}"
+    
+    # ... 剩下的所有原业务代码全部缩进放到这个函数里面 ...
 import streamlit as st
 
 # 必须紧跟在 st.set_page_config 之后或代码最上方

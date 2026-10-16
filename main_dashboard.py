@@ -934,7 +934,7 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                         combined_labels,
                         loc="upper center",
                         bbox_to_anchor=(0.5, -0.18),
-                        ncol=2,
+                        ncol=1,
                         fontsize=10,
                         frameon=True,
                     )
@@ -950,7 +950,7 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
 
                     import io
                     buf = io.BytesIO()
-                    fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
+                    fig.savefig(buf, format="png", dpi=200, bbox_inches="tight", pad_inches=0.05)
                     buf.seek(0)
                     st.session_state.plotted_fig_bytes = buf.getvalue()
                     st.session_state.plotted_title = chart_title

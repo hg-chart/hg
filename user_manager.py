@@ -1,14 +1,63 @@
 # -*- coding: utf-8 -*-
-"""用户账号与权限管理独立模块"""
+"""用户账号与权限管理独立模块（带 JSON 本地持久化保存）"""
 
+import json
+import os
 import streamlit as st
+
+USER_DB_FILE = "users_db.json"
+
+# 默认内置账号数据（仅在文件不存在时新建）
+DEFAULT_USER_DB = {
+    "credentials": {
+        "usernames": {
+            "admin": {
+                "name": "超级管理员",
+                "password": "123456",
+                "role": "admin",
+                "allowed_factories": "ALL",
+            },
+            "shanxi_user": {
+                "name": "山西红光厂长",
+                "password": "123456",
+                "role": "user",
+                "allowed_factories": ["shanxihg"],
+            },
+        }
+    },
+    "cookie": {
+        "expiry_days": 30,
+        "key": "factory_gateway_secure_key",
+        "name": "factory_gateway_cookie",
+    },
+}
+
+
+def load_user_db():
+  """从文件加载用户数据库，若文件不存在则创建默认文件"""
+  if not os.path.exists(USER_DB_FILE):
+    save_user_db(DEFAULT_USER_DB)
+    return DEFAULT_USER_DB
+  try:
+    with open(USER_DB_FILE, "r", encoding="utf-8") as f:
+      return json.load(f)
+  except Exception:
+    return DEFAULT_USER_DB
+
+
+def save_user_db(db_data=None):
+  """保存用户数据库到 JSON 文件中"""
+  if db_data is None:
+    db_data = st.session_state["user_db"]
+  with open(USER_DB_FILE, "w", encoding="utf-8") as f:
+    json.dump(db_data, f, ensure_ascii=False, indent=2)
 
 
 def render_user_management(username, user_role, authenticator):
   """渲染侧边栏用户相关界面（个人密码修改 + 超级管理员用户管理）"""
-  current_user = st.session_state["user_db"]["credentials"]["usernames"][
-      username
-  ]
+  current_user = st.session_state["user_db"]["credentials"]["usernames"].get(
+      username, {}
+  )
   user_disp_name = current_user.get("name", username)
 
   st.sidebar.title("🔐 会话信息")
@@ -24,6 +73,7 @@ def render_user_management(username, user_role, authenticator):
         st.session_state["user_db"]["credentials"]["usernames"][username][
             "password"
         ] = new_self_pwd
+        save_user_db()  # 写入文件持久化
         st.success("✅ 个人密码重置成功，下次登录生效！")
       else:
         st.warning("密码不能为空")
@@ -62,17 +112,17 @@ def render_user_management(username, user_role, authenticator):
       # 关联工厂权限
       current_allowed = u_info.get("allowed_factories", [])
       if current_allowed == "ALL":
-        default_selected_facs = st.session_state["all_factories"]
+        default_selected_facs = st.session_state.get("all_factories", [])
       else:
         default_selected_facs = [
             f
             for f in current_allowed
-            if f in st.session_state["all_factories"]
+            if f in st.session_state.get("all_factories", [])
         ]
 
       edit_facs = st.multiselect(
           "允许访问的工厂",
-          st.session_state["all_factories"],
+          st.session_state.get("all_factories", []),
           default=default_selected_facs,
           key=f"edit_facs_{target_u}",
       )
@@ -107,7 +157,11 @@ def render_user_management(username, user_role, authenticator):
           st.session_state["user_db"]["credentials"]["usernames"][new_u] = (
               updated_user_config
           )
-          st.success(f"用户【{new_u}】资料已成功更新！")
+
+          # 核心修复：把修改保存到持久化 JSON 文件中
+          save_user_db()
+
+          st.success(f"用户【{new_u}】资料已成功更新并已永久保存！")
           st.rerun()
 
       st.markdown("---")
@@ -126,7 +180,7 @@ def render_user_management(username, user_role, authenticator):
 
       assigned_facs = st.multiselect(
           "授权工厂",
-          st.session_state["all_factories"],
+          st.session_state.get("all_factories", []),
           key="select_user_allowed_facs",
       )
 
@@ -142,7 +196,9 @@ def render_user_management(username, user_role, authenticator):
         ):
           st.error("该账号已存在！")
         else:
-          st.session_state["user_db"]["credentials"]["usernames"][new_uname] = {
+          st.session_state["user_db"]["credentials"]["usernames"][
+              new_uname
+          ] = {
               "name": new_disp_name.strip()
               if new_disp_name.strip()
               else new_uname,
@@ -150,8 +206,9 @@ def render_user_management(username, user_role, authenticator):
               "role": "user",
               "allowed_factories": assigned_facs
               if assigned_facs
-              else st.session_state["all_factories"],
+              else st.session_state.get("all_factories", []),
           }
+          save_user_db()  # 保存新用户到本地文件
           st.success(f"用户账号【{new_uname}】创建成功！")
           st.rerun()
 
@@ -169,5 +226,6 @@ def render_user_management(username, user_role, authenticator):
           del st.session_state["user_db"]["credentials"]["usernames"][
               user_to_del
           ]
+          save_user_db()  # 删除后保存到文件
           st.success(f"账号【{user_to_del}】已成功删除！")
           st.rerun()

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（含工厂安全回收站与二次确认弹窗）"""
+"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（含回收站与二次确认弹窗）"""
 
 import inspect
 import os
@@ -154,7 +154,6 @@ def purge_factory_r2_data(target_factory):
             objects_to_delete.append({"Key": obj["Key"]})
 
       if objects_to_delete:
-        # 分批彻底清除文件
         for i in range(0, len(objects_to_delete), 1000):
           r2_client.delete_objects(
               Bucket=r2_storage.R2_BUCKET_NAME,
@@ -342,7 +341,7 @@ if user_role == "admin":
 st.sidebar.markdown("---")
 
 # ============================================================
-# 5. 动态设置 R2 路径与数据隔离桥接
+# 5. 动态设置 R2 路径与高容错防崩溃数据桥接
 # ============================================================
 r2_prefix = f"device-monitor/{selected_factory}/"
 r2_storage.BASE_PREFIX = r2_prefix
@@ -365,17 +364,21 @@ if r2_storage._get_r2_client() is not None:
     st.session_state[sync_key] = True
 
 standard_vault = "uploaded_vault"
-if os.path.lexists(standard_vault):
-  if os.path.islink(standard_vault) or os.path.isfile(standard_vault):
-    os.unlink(standard_vault)
-  else:
-    shutil.rmtree(standard_vault)
 
 try:
-  os.symlink(factory_vault, standard_vault, target_is_directory=True)
+  if os.path.lexists(standard_vault):
+    if os.path.islink(standard_vault) or os.path.isfile(standard_vault):
+      os.unlink(standard_vault)
+    else:
+      shutil.rmtree(standard_vault, ignore_errors=True)
 except Exception:
-  if os.path.exists(factory_vault):
-    shutil.copytree(factory_vault, standard_vault, dirs_exist_ok=True)
+  pass
+
+try:
+  if not os.path.exists(standard_vault):
+    os.symlink(factory_vault, standard_vault, target_is_directory=True)
+except Exception:
+  pass
 
 # ============================================================
 # 6. 安全运行主仪表盘脚本

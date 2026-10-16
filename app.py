@@ -6,11 +6,10 @@ import inspect
 import runpy
 import streamlit_authenticator as stauth
 
-# 导入独立模块
 import sidebar_manager
 
 # ============================================================
-# 0. 页面外观与全局全屏宽屏配置（彻底解决窄屏留白与侧边栏消失）
+# 0. 页面外观与绝对全屏宽屏配置
 # ============================================================
 st.set_page_config(
     page_title="设备运行数据分析系统", 
@@ -21,29 +20,25 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    /* 1. 隐藏右上角工具栏与页脚 */
-    div[data-testid="stToolbar"] {
-        visibility: hidden !important;
-        display: none !important;
-    }
-    footer {
-        visibility: hidden !important;
-    }
+    /* 1. 隐藏多余元素 */
+    div[data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
+    footer { visibility: hidden !important; }
 
-    /* 2. 强制全屏铺满（解决两边留白过大、图表太窄、字太小的问题） */
+    /* 2. 彻底打破两边留白，强制图表和容器 100% 铺满全屏 */
     .main .block-container {
-        max-width: 98% !important;
-        padding-left: 2rem !important;
-        padding-right: 2rem !important;
+        max-width: 100% !important;
+        width: 100% !important;
+        padding-left: 3rem !important;
+        padding-right: 3rem !important;
         padding-top: 1rem !important;
     }
 
-    /* 3. 强制侧边栏常驻铺满屏幕左侧 */
+    /* 3. 强制侧边栏固定显示在左侧且不被压缩 */
     section[data-testid="stSidebar"] {
         display: block !important;
         visibility: visible !important;
-        min-width: 280px !important;
-        max-width: 320px !important;
+        width: 300px !important;
+        min-width: 300px !important;
     }
     </style>
     """,
@@ -125,12 +120,11 @@ selected_factory = sidebar_manager.render_sidebar(
 )
 
 # ============================================================
-# 4. 安全运行主仪表盘脚本（保留全局 wide 布局）
+# 4. 安全运行主仪表盘脚本
 # ============================================================
 original_set_page_config = st.set_page_config
 
 def safe_set_page_config(*args, **kwargs):
-  # 强制将后续任何 set_page_config 调用的 layout 都改为 wide
   kwargs["layout"] = "wide"
   kwargs["initial_sidebar_state"] = "expanded"
   try:
@@ -141,7 +135,6 @@ def safe_set_page_config(*args, **kwargs):
 st.set_page_config = safe_set_page_config
 
 try:
-  # 使用 runpy 独立安全地执行原版 main_dashboard.py
   runpy.run_path("main_dashboard.py", run_name="__main__")
 finally:
   st.set_page_config = original_set_page_config

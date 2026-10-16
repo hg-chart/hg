@@ -4,3 +4,4 @@ duckdb
 matplotlib
 openpyxl
 boto3
+streamlit-authenticator

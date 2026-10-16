@@ -7,7 +7,7 @@ import r2_storage
 
 
 def render_cloud_chart_manager(chart_history_dir, chart_trash_dir):
-    """渲染云端历史图表按标签检索、查看、下载及图片回收站管理界面"""
+    """渲染云端历史图表按标签检索、查看、下载及图片回收站管理界面（兼容区间标签解析）"""
     st.markdown("---")
     st.subheader("☁️ 云端历史对比趋势图按标签检索与调用")
 
@@ -29,9 +29,18 @@ def render_cloud_chart_manager(chart_history_dir, chart_trash_dir):
                         if scheme not in schemes_dict:
                             schemes_dict[scheme] = {}
                         
+                        # 优化标签解析：兼容 "负荷_240_250_xxx.png" 或 "负荷_240_xxx.png" 等格式
                         tag_parts = filename.split("_")
-                        if len(tag_parts) >= 2:
+                        if len(tag_parts) >= 4 and tag_parts[0] == "负荷" and tag_parts[1].replace('.', '', 1).isdigit() and tag_parts[2].replace('.', '', 1).isdigit():
+                            # 属于区间格式，例如 负荷_240_250
+                            tag = f"{tag_parts[0]}_{tag_parts[1]}_{tag_parts[2]}"
+                        elif len(tag_parts) >= 3 and tag_parts[0] == "负荷" and tag_parts[1] == "上限":
+                            tag = f"{tag_parts[0]}_{tag_parts[1]}_{tag_parts[2]}"
+                        elif len(tag_parts) >= 3 and tag_parts[0] == "负荷" and tag_parts[1].replace('.', '', 1).isdigit():
+                            # 属于单值格式，例如 负荷_240
                             tag = f"{tag_parts[0]}_{tag_parts[1]}"
+                        elif len(tag_parts) >= 2 and tag_parts[0] == "负荷" and tag_parts[1] == "全部":
+                            tag = "负荷_全部"
                         else:
                             tag = filename.split(".")[0]
                         

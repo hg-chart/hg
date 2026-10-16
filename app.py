@@ -146,3 +146,6 @@ if r2_storage._get_r2_client() is not None:
     st.session_state[sync_key] = True
 
 import main_dashboard
+# 运行主业务模块并传入当前选中的工厂
+if hasattr(main_dashboard, "render_dashboard"):
+    main_dashboard.render_dashboard(selected_factory)

@@ -67,11 +67,15 @@ def _r2_bucket():
 
 
 def _r2_key(local_path_or_key):
-  value = str(local_path_or_key).replace("\\", "/").lstrip("/")
+  # 【核心安全转换】：如果传进来的 key 带有我们为了适配前端加的 "dummy/"，自动剔除它再连云端
+  cleaned_key = str(local_path_or_key).replace("\\", "/").lstrip("/")
+  if cleaned_key.startswith("dummy/"):
+    cleaned_key = cleaned_key[len("dummy/"):]
+
   current_prefix = _get_active_prefix()
-  if value.startswith(current_prefix):
-    return value
-  return current_prefix + value
+  if cleaned_key.startswith(current_prefix):
+    return cleaned_key
+  return current_prefix + cleaned_key
 
 
 def r2_upload_file(local_path, key=None):
@@ -79,8 +83,7 @@ def r2_upload_file(local_path, key=None):
   if client is None:
     return False
   try:
-    raw_key = key or local_path
-    full_key = _r2_key(raw_key)
+    full_key = _r2_key(key or local_path)
     client.upload_file(str(local_path), _r2_bucket(), full_key)
     return True
   except Exception as exc:
@@ -119,10 +122,7 @@ def r2_list_keys():
         k = item["Key"]
         if k.startswith(current_prefix):
           rel = k[len(current_prefix):]
-          # 【零改动适配核心】：
-          # 原版 main_dashboard.py 解析云端图片时 Hardcode 了 parts[2] 为方案名、parts[3] 为文件名。
-          # 我们在这里为图表路径智能补齐一个 dummy 前缀，使切分后：
-          # parts[0]="dummy", parts[1]="chart_history", parts[2]=方案名, parts[3]=文件名
+          # 给前端主界面适配的虚拟前缀（使其满足 parts[2] 为方案名、parts[3] 为文件名）
           if "chart_history/" in rel:
             k_adjusted = "dummy/" + rel
           else:

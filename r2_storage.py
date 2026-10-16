@@ -79,7 +79,6 @@ def r2_upload_file(local_path, key=None):
   if client is None:
     return False
   try:
-    # 确保保存到 R2 时带上正确的工厂前缀
     raw_key = key or local_path
     full_key = _r2_key(raw_key)
     client.upload_file(str(local_path), _r2_bucket(), full_key)
@@ -118,11 +117,19 @@ def r2_list_keys():
       
       for item in response.get("Contents", []):
         k = item["Key"]
-        # 【核心修正】：自动剥离当前工厂前缀，让返回的 Key 完美以 "chart_history/" 或文件名开头
-        # 这样原版 main_dashboard.py 解析目录层级时就不会发生错位！
         if k.startswith(current_prefix):
-          k = k[len(current_prefix):]
-        keys.append(k)
+          rel = k[len(current_prefix):]
+          # 【零改动适配核心】：
+          # 原版 main_dashboard.py 解析云端图片时 Hardcode 了 parts[2] 为方案名、parts[3] 为文件名。
+          # 我们在这里为图表路径智能补齐一个 dummy 前缀，使切分后：
+          # parts[0]="dummy", parts[1]="chart_history", parts[2]=方案名, parts[3]=文件名
+          if "chart_history/" in rel:
+            k_adjusted = "dummy/" + rel
+          else:
+            k_adjusted = rel
+          keys.append(k_adjusted)
+        else:
+          keys.append(k)
 
       if not response.get("IsTruncated"):
         break
@@ -139,7 +146,6 @@ def sync_local_storage_with_r2(vault_dir, file_trash_dir, chart_history_dir):
   if client is None:
     return False
 
-  # 直接获取原始带前缀的 keys 用于下载文件
   try:
     raw_keys = []
     token = None
@@ -164,14 +170,12 @@ def sync_local_storage_with_r2(vault_dir, file_trash_dir, chart_history_dir):
     if remote_key.endswith("/"):
       continue
     
-    # 提取相对于当前工厂前缀的路径
     rel = remote_key[len(current_prefix):]
     if not rel:
       continue
 
-    # 根据路径分发下载到对应的本地文件夹
-    if rel.startswith("chart_history/"):
-      local_target = Path(rel) # 包含 chart_history/方案名/文件名
+    if "chart_history/" in rel:
+      local_target = Path(rel)
     elif "trash" in rel:
       local_target = Path(file_trash_dir) / rel.split("/")[-1]
     else:

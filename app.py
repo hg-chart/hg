@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（支持工厂增删、回收站、用户管理与密码重置）"""
+"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（支持工厂增删、回收站、用户账号/姓名/密码修改）"""
 
 import inspect
 import os
@@ -213,7 +213,7 @@ def confirm_permanent_delete_dialog(target_factory):
         st.rerun()
       else:
         st.error(
-            f"输入的工厂名称不匹配！要求输入：{target_factory}，实际输入：{typed_name}"
+            f"输入的工厂名称不匹配！要求输入：{target_error}，实际输入：{typed_name}"
         )
 
 
@@ -224,12 +224,13 @@ current_user = st.session_state["user_db"]["credentials"]["usernames"][
     username
 ]
 user_role = current_user.get("role", "user")
+user_disp_name = current_user.get("name", username)
 allowed_factories = current_user.get("allowed_factories", [])
 
 st.sidebar.title("🔐 会话信息")
-st.sidebar.write(f"当前用户：**{name}** (`{username}`)")
+st.sidebar.write(f"当前用户：**{user_disp_name}** (`{username}`)")
 
-# 修改当前登录用户密码[cite: 7]
+# 修改个人密码
 with st.sidebar.expander("🔑 修改我的密码"):
   new_self_pwd = st.text_input(
       "新密码", type="password", key="reset_self_pwd_input"
@@ -281,71 +282,109 @@ else:
 st.session_state["selected_factory_val"] = selected_factory
 st.sidebar.success(f"已连接工作区：\n**{selected_factory}**")
 
-# 【超级管理员工具箱：工厂管理 + 用户权限与密码统一管理】
+# 【超级管理员工具箱：工厂管理 + 用户账号/显示名/密码统一编辑】
 if user_role == "admin":
   st.sidebar.markdown("---")
 
-  # 1. 用户与密码管理板块
-  with st.sidebar.expander("👥 用户账号与密码管理"):
-    st.markdown("#### 🔑 修改任意用户密码")
+  # 1. 用户账号与资料全面编辑板块
+  with st.sidebar.expander("👥 用户账号与资料管理"):
+    st.markdown("#### ✏️ 编辑现有用户资料")
     all_users = list(
         st.session_state["user_db"]["credentials"]["usernames"].keys()
     )
-    target_user_to_edit = st.selectbox(
-        "选择目标用户", all_users, key="select_user_to_edit_pwd"
+    target_u = st.selectbox(
+        "选择要修改的用户", all_users, key="select_u_to_edit_full"
     )
-    target_new_pwd = st.text_input(
-        f"设置 [{target_user_to_edit}] 的新密码",
-        type="password",
-        key="input_target_new_pwd",
+    
+    u_info = st.session_state["user_db"]["credentials"]["usernames"][target_u]
+
+    # 编辑登录账号名
+    edit_uname = st.text_input(
+        "登录账号 (Username)", value=target_u, key=f"edit_uname_{target_u}"
     )
-    if st.button("确认重置该用户密码", key="btn_confirm_user_pwd_reset"):
-      if target_new_pwd:
-        st.session_state["user_db"]["credentials"]["usernames"][
-            target_user_to_edit
-        ]["password"] = target_new_pwd
-        st.success(f"已成功重置用户【{target_user_to_edit}】的密码！")
+    # 编辑显示姓名
+    edit_disp_name = st.text_input(
+        "人员姓名/显示名 (Name)", value=u_info.get("name", ""), key=f"edit_disp_{target_u}"
+    )
+    # 编辑密码（留空表示不修改密码）
+    edit_pwd = st.text_input(
+        "重置密码 (留空则保持原密码)", type="password", key=f"edit_pwd_{target_u}"
+    )
+    
+    # 编辑允许访问的工厂
+    current_allowed = u_info.get("allowed_factories", [])
+    if current_allowed == "ALL":
+      default_selected_facs = st.session_state["all_factories"]
+    else:
+      default_selected_facs = [f for f in current_allowed if f in st.session_state["all_factories"]]
+
+    edit_facs = st.multiselect(
+        "允许访问的工厂",
+        st.session_state["all_factories"],
+        default=default_selected_facs,
+        key=f"edit_facs_{target_u}"
+    )
+
+    if st.button("保存修改", key="btn_save_u_edit", use_container_width=True):
+      new_u = edit_uname.strip()
+      if not new_u:
+        st.error("登录账号不能为空！")
+      elif new_u != target_u and new_u in st.session_state["user_db"]["credentials"]["usernames"]:
+        st.error(f"登录账号【{new_u}】已被占用，请换一个！")
       else:
-        st.error("密码不能为空！")
+        # 构建更新后的用户配置
+        updated_user_config = {
+            "name": edit_disp_name.strip() if edit_disp_name.strip() else new_u,
+            "password": edit_pwd if edit_pwd else u_info.get("password"),
+            "role": u_info.get("role", "user"),
+            "allowed_factories": edit_facs if u_info.get("role") != "admin" else "ALL"
+        }
+
+        # 如果修改了账号 key（Username），转移数据并删除旧 key
+        if new_u != target_u:
+          del st.session_state["user_db"]["credentials"]["usernames"][target_u]
+        
+        st.session_state["user_db"]["credentials"]["usernames"][new_u] = updated_user_config
+        st.success(f"用户【{new_u}】资料已更新成功！")
+        st.rerun()
 
     st.markdown("---")
     st.markdown("#### ➕ 创建新账号")
     new_uname = st.text_input(
-        "登录用户名 (英文/数字)", placeholder="例: taiyuan_user", key="new_u_name"
+        "新账号 (Username)", placeholder="例: taiyuan_user", key="new_u_name"
     )
     new_disp_name = st.text_input(
-        "人员姓名/显示名", placeholder="例: 太原厂长", key="new_u_disp"
+        "显示名 (Name)", placeholder="例: 太原厂长", key="new_u_disp"
     )
     new_u_pwd = st.text_input(
         "初始密码", type="password", key="new_u_pwd_input"
     )
 
-    # 关联授权工厂
     assigned_facs = st.multiselect(
-        "允许访问的工厂",
+        "授权工厂",
         st.session_state["all_factories"],
         key="select_user_allowed_facs",
     )
 
-    if st.button("创建用户账号", key="btn_create_new_user", use_container_width=True):
+    if st.button("确认创建用户", key="btn_create_new_user", use_container_width=True):
       new_uname = new_uname.strip()
       if not new_uname or not new_u_pwd:
-        st.error("用户名和密码必填！")
+        st.error("账号和密码为必填项！")
       elif (
           new_uname
           in st.session_state["user_db"]["credentials"]["usernames"]
       ):
-        st.error("该用户名已存在！")
+        st.error("该账号已存在！")
       else:
         st.session_state["user_db"]["credentials"]["usernames"][new_uname] = {
-            "name": new_disp_name if new_disp_name else new_uname,
+            "name": new_disp_name.strip() if new_disp_name.strip() else new_uname,
             "password": new_u_pwd,
             "role": "user",
             "allowed_factories": assigned_facs
             if assigned_facs
             else st.session_state["all_factories"],
         }
-        st.success(f"用户【{new_uname}】创建成功！")
+        st.success(f"用户账号【{new_uname}】创建成功！")
         st.rerun()
 
     st.markdown("---")
@@ -355,7 +394,7 @@ if user_role == "admin":
         [u for u in all_users if u != "admin"],
         key="select_u_del",
     )
-    if st.button("确认删除该账号", key="btn_del_user_acc", use_container_width=True):
+    if st.button("确认删除账号", key="btn_del_user_acc", use_container_width=True):
       if user_to_del:
         del st.session_state["user_db"]["credentials"]["usernames"][
             user_to_del

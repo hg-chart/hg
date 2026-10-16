@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（支持用户数据持久化与防掉线保护）"""
+"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（支持用户数据持久化与彻底防刷新掉线）"""
 
 import inspect
 import os
@@ -113,7 +113,7 @@ if "user_db" not in st.session_state:
   st.session_state["user_db"] = user_manager.load_user_db()
 
 # ============================================================
-# 2. 用户登录认证（增加防刷新/防rerun掉线保护）
+# 2. 用户登录认证（增加防刷新旁路判定）
 # ============================================================
 authenticator = stauth.Authenticate(
     st.session_state["user_db"]["credentials"],
@@ -123,51 +123,61 @@ authenticator = stauth.Authenticate(
     auto_hash=True,
 )
 
-# 防刷新断连：如果 URL 参数中标记了登录成功，优先恢复 session_state 状态
-if "auth_status" in st.query_params and st.query_params["auth_status"] == "success":
-  if "authentication_status" not in st.session_state:
+# 检查当前是否已经成功登录（从 Session 或 URL query 中恢复）
+is_logged_in = False
+
+if st.session_state.get("authentication_status") is True and st.session_state.get("username"):
+  is_logged_in = True
+elif "auth_status" in st.query_params and st.query_params["auth_status"] == "success":
+  # 从 URL 中读取标记并自动恢复状态
+  if "logged_username" in st.query_params:
+    st.session_state["username"] = st.query_params["logged_username"]
     st.session_state["authentication_status"] = True
+    is_logged_in = True
 
-login_parameters = inspect.signature(authenticator.login).parameters
-if "form_name" in login_parameters:
-  login_result = authenticator.login("请登录设备运行数据分析系统", "main")
-elif "location" in login_parameters:
-  login_result = authenticator.login(location="main")
-else:
-  login_result = authenticator.login()
+if not is_logged_in:
+  # 未登录状态：渲染登录界面
+  login_parameters = inspect.signature(authenticator.login).parameters
+  if "form_name" in login_parameters:
+    login_result = authenticator.login("请登录设备运行数据分析系统", "main")
+  elif "location" in login_parameters:
+    login_result = authenticator.login(location="main")
+  else:
+    login_result = authenticator.login()
 
-if isinstance(login_result, (tuple, list)) and len(login_result) == 3:
-  name, authentication_status, username = login_result
+  if isinstance(login_result, (tuple, list)) and len(login_result) == 3:
+    name, authentication_status, username = login_result
+  else:
+    name = st.session_state.get("name")
+    authentication_status = st.session_state.get("authentication_status")
+    username = st.session_state.get("username")
+
+  if authentication_status is True:
+    st.session_state["authentication_status"] = True
+    st.session_state["username"] = username
+    st.session_state["name"] = name
+    st.query_params["auth_status"] = "success"
+    st.query_params["logged_username"] = str(username)
+    st.rerun()
+  elif authentication_status is False:
+    st.error("❌ 用户名或密码错误")
+    st.stop()
+  else:
+    st.info("👉 请输入您的登录凭据以访问系统")
+    st.stop()
 else:
-  name = st.session_state.get("name")
-  authentication_status = st.session_state.get("authentication_status")
+  # 已确认登录状态
   username = st.session_state.get("username")
-
-# 核心容错：若 authenticator 临时返回 None，但 session 确认已登录，则保持会话
-if authentication_status is None and st.session_state.get("authentication_status") is True:
   authentication_status = True
-  username = st.session_state.get("username")
-  name = st.session_state.get("name")
 
-if authentication_status is True:
-  # 登录成功后，将状态锁定在 session 和 URL 中，刷新也不会丢失
-  st.session_state["authentication_status"] = True
-  st.session_state["username"] = username
-  st.session_state["name"] = name
-  st.query_params["auth_status"] = "success"
-
-if authentication_status is False:
-  st.error("❌ 用户名或密码错误")
-  st.stop()
-elif authentication_status is None:
-  st.info("👉 请输入您的登录凭据以访问系统")
-  st.stop()
-elif (
-    authentication_status is not True
-    or username
-    not in st.session_state["user_db"]["credentials"]["usernames"]
+if (
+    username not in st.session_state["user_db"]["credentials"]["usernames"]
 ):
-  st.error("登录状态异常，请刷新页面后重新登录。")
+  st.error("登录账号不存在或权限不足，请重新登录。")
+  # 清理异常状态
+  st.session_state.pop("authentication_status", None)
+  st.session_state.pop("username", None)
+  st.query_params.clear()
   st.stop()
 
 # ============================================================

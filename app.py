@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据分析系统 - 直接按工厂隔离的网关入口"""
+"""设备运行数据分析系统 - 工厂安全隔离路由网关入口"""
 
 import os
-import r2_storage
 import streamlit as st
 import streamlit_authenticator as stauth
 
-import main_dashboard
+# 1. 导入 r2_storage 模块
+import r2_storage
 
 # ============================================================
-# 0. 全局页面配置
+# 0. 页面外观与基础配置
 # ============================================================
 st.set_page_config(page_title="设备运行数据分析系统", layout="wide")
 
+# 隐藏右上角工具栏与页脚
 st.markdown(
     """
     <style>
@@ -29,9 +30,9 @@ st.markdown(
 )
 
 # ============================================================
-# 1. 工厂列表与用户权限定义（直接按工厂平铺）
+# 1. 多工厂与权限字典配置
 # ============================================================
-# 系统中所有的工厂列表（直接对应 R2 中的文件夹名）
+# 平铺所有工厂列表（对应 R2 存储桶 device-monitor/ 下的文件夹名）
 ALL_FACTORIES = ["shanxihg", "太原分厂", "华东一厂", "华东二厂"]
 
 USER_CREDENTIALS = {
@@ -39,17 +40,21 @@ USER_CREDENTIALS = {
         "usernames": {
             "admin": {
                 "name": "超级管理员",
-                "password": "$2b$12$eImiTXuWVxfM37uY4JANjQ==",  # 默认密码: 123456
+                "password": (
+                    "$2b$12$eImiTXuWVxfM37uY4JANjQ=="
+                ),  # 默认密码: 123456
                 "role": "admin",
-                "allowed_factories": "ALL",  # 管理员可以切换所有工厂
+                "allowed_factories": "ALL",  # 上帝视角，可以下拉切换所有工厂
             },
             "shanxi_user": {
                 "name": "山西红光厂长",
-                "password": "$2b$12$eImiTXuWVxfM37uY4JANjQ==",  # 默认密码: 123456
+                "password": (
+                    "$2b$12$eImiTXuWVxfM37uY4JANjQ=="
+                ),  # 默认密码: 123456
                 "role": "user",
                 "allowed_factories": [
                     "shanxihg"
-                ],  # 只能看 shanxihg，看不到其他任何工厂
+                ],  # 只能看到 shanxihg，对其余工厂无感知
             },
         }
     },
@@ -80,7 +85,7 @@ elif authentication_status == None:
   st.stop()
 
 # ============================================================
-# 2. 侧边栏：极简的工厂直接切换
+# 2. 侧边栏：极简工厂选择与隔离
 # ============================================================
 current_user = USER_CREDENTIALS["credentials"]["usernames"][username]
 user_role = current_user.get("role", "user")
@@ -94,44 +99,43 @@ st.sidebar.markdown("---")
 st.sidebar.title("🏭 工厂工作区")
 
 if user_role == "admin" or allowed_factories == "ALL":
-  # 管理员：直接从所有工厂里选择
+  # 超级管理员：可自由下拉选择所有工厂
   selected_factory = st.sidebar.selectbox("选择目标工厂", ALL_FACTORIES)
 else:
-  # 普通用户：只展示其被授权的工厂，彻底隔离
+  # 普通工厂用户：锁定为其授权的工厂，彻底隔离
   selected_factory = st.sidebar.selectbox("选择当前工厂", allowed_factories)
 
-# 将工厂名存入 session_state（不需要集团概念了，传空或传本身即可）
-st.session_state["selected_factory"] = selected_factory
-st.session_state["selected_group"] = "default"
-
-st.sidebar.success(f"当前生效工厂：\n**{selected_factory}**")
+st.sidebar.success(f"已连接工作区：\n**{selected_factory}**")
 st.sidebar.markdown("---")
 
 # ============================================================
-# 3. 动态 R2 路径隔离与本地同步
+# 3. 在导入并加载主业务前，动态设置 R2 的爹文件夹路径
 # ============================================================
-# 完美对接你已经建好的 shanxihg 文件夹
-r2_storage.BASE_PREFIX = f"device-monitor/{selected_factory}/"
+# 关键点：把 R2 基础前缀直接指向当前选中的工厂，例如 device-monitor/shanxihg/
+r2_prefix = f"device-monitor/{selected_factory}/"
+r2_storage.BASE_PREFIX = r2_prefix
 
-VAULT_DIR = f"uploaded_vault_{selected_factory}"
-FILE_TRASH_DIR = f"file_trash_{selected_factory}"
-CHART_HISTORY_DIR = f"chart_history_{selected_factory}"
+# 创建本地对应的缓存文件夹，避免冲突
+vault_dir = "uploaded_vault"
+file_trash_dir = "file_trash"
+chart_history_dir = "chart_history"
 
-os.makedirs(VAULT_DIR, exist_ok=True)
-os.makedirs(FILE_TRASH_DIR, exist_ok=True)
-os.makedirs(CHART_HISTORY_DIR, exist_ok=True)
+os.makedirs(vault_dir, exist_ok=True)
+os.makedirs(file_trash_dir, exist_ok=True)
+os.makedirs(chart_history_dir, exist_ok=True)
 
+# 强制触发一次同步，把 shanxihg 里的文件拉到本地
 if r2_storage._get_r2_client() is not None:
   sync_key = f"_r2_synced_{selected_factory}"
   if not st.session_state.get(sync_key, False):
-    with st.spinner(f"正在同步 [{selected_factory}] 的云端数据..."):
+    with st.spinner(f"正在加载 [{selected_factory}] 的云端数据..."):
       r2_storage.sync_local_storage_with_r2(
-          VAULT_DIR, FILE_TRASH_DIR, CHART_HISTORY_DIR
+          vault_dir, file_trash_dir, chart_history_dir
       )
     st.session_state[sync_key] = True
 
 # ============================================================
-# 4. 加载并运行主业务模块
+# 4. 动态唤醒并运行原版业务主脚本 main_dashboard.py
 # ============================================================
-if hasattr(main_dashboard, "render_dashboard"):
-  main_dashboard.render_dashboard(selected_factory, "default")
+# 此时 R2 的路径已经被替换为了 device-monitor/shanxihg/，主脚本运行后就会直接显示出你搬家过去的所有文件！
+import main_dashboard

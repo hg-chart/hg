@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（支持用户数据持久化）"""
+"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（支持用户数据持久化与防掉线保护）"""
 
 import inspect
 import os
@@ -113,7 +113,7 @@ if "user_db" not in st.session_state:
   st.session_state["user_db"] = user_manager.load_user_db()
 
 # ============================================================
-# 2. 用户登录认证
+# 2. 用户登录认证（增加防刷新/防rerun掉线保护）
 # ============================================================
 authenticator = stauth.Authenticate(
     st.session_state["user_db"]["credentials"],
@@ -122,6 +122,11 @@ authenticator = stauth.Authenticate(
     st.session_state["user_db"]["cookie"]["expiry_days"],
     auto_hash=True,
 )
+
+# 防刷新断连：如果 URL 参数中标记了登录成功，优先恢复 session_state 状态
+if "auth_status" in st.query_params and st.query_params["auth_status"] == "success":
+  if "authentication_status" not in st.session_state:
+    st.session_state["authentication_status"] = True
 
 login_parameters = inspect.signature(authenticator.login).parameters
 if "form_name" in login_parameters:
@@ -137,6 +142,19 @@ else:
   name = st.session_state.get("name")
   authentication_status = st.session_state.get("authentication_status")
   username = st.session_state.get("username")
+
+# 核心容错：若 authenticator 临时返回 None，但 session 确认已登录，则保持会话
+if authentication_status is None and st.session_state.get("authentication_status") is True:
+  authentication_status = True
+  username = st.session_state.get("username")
+  name = st.session_state.get("name")
+
+if authentication_status is True:
+  # 登录成功后，将状态锁定在 session 和 URL 中，刷新也不会丢失
+  st.session_state["authentication_status"] = True
+  st.session_state["username"] = username
+  st.session_state["name"] = name
+  st.query_params["auth_status"] = "success"
 
 if authentication_status is False:
   st.error("❌ 用户名或密码错误")

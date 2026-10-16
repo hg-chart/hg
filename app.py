@@ -10,7 +10,7 @@ import streamlit_authenticator as stauth
 import r2_storage
 
 # ============================================================
-# 0. 页面外观与宽屏配置（原生支持 wide，不加导致偏移的暴力 CSS）
+#  页面外观与缓存清理配置（彻底清除浏览器残留的侧边栏收起记忆）
 # ============================================================
 st.set_page_config(
     page_title="设备运行数据分析系统", 
@@ -24,15 +24,22 @@ st.markdown(
     /* 隐藏右上角工具栏与页脚 */
     div[data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
     footer { visibility: hidden !important; }
-
-    /* 优化全屏容器：去掉多余的左右强制偏移，让 Streamlit 原生 wide 布局正常工作，消除右移和偏位 */
-    .main .block-container {
-        padding-top: 1.5rem !important;
-        padding-bottom: 2rem !important;
-        padding-left: 3rem !important;
-        padding-right: 3rem !important;
-    }
     </style>
+
+    <script>
+    // 强行破解并重置浏览器的侧边栏折叠缓存
+    try {
+        // 遍历并修改所有可能记录侧边栏状态的本地缓存
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && (key.toLowerCase().includes('sidebar') || key.toLowerCase().includes('nav'))) {
+                localStorage.setItem(key, '"expanded"');
+            }
+        }
+        // 直接指定 Streamlit 常规的侧边栏状态键为展开
+        localStorage.setItem('stSidebarState', '"expanded"');
+    } catch (e) {}
+    </script>
     """,
     unsafe_allow_html=True,
 )
@@ -107,7 +114,7 @@ elif (
   st.stop()
 
 # ============================================================
-# 3. 侧边栏：极简工厂选择与隔离（直接内联渲染，100% 确保侧边栏显示）
+# 3. 侧边栏：极简工厂选择与隔离
 # ============================================================
 current_user = USER_CREDENTIALS["credentials"]["usernames"][username]
 user_role = current_user.get("role", "user")
@@ -178,7 +185,6 @@ def safe_set_page_config(*args, **kwargs):
 st.set_page_config = safe_set_page_config
 
 try:
-  # 使用 runpy 独立安全地执行原版 main_dashboard.py
   runpy.run_path("main_dashboard.py", run_name="__main__")
 finally:
   st.set_page_config = original_set_page_config

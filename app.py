@@ -10,7 +10,7 @@ import streamlit_authenticator as stauth
 import sidebar_manager
 
 # ============================================================
-# 0. 页面外观与基础配置
+# 0. 页面外观与全局全屏宽屏配置（彻底解决窄屏留白与侧边栏消失）
 # ============================================================
 st.set_page_config(
     page_title="设备运行数据分析系统", 
@@ -21,12 +21,29 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+    /* 1. 隐藏右上角工具栏与页脚 */
     div[data-testid="stToolbar"] {
-        visibility: hidden;
+        visibility: hidden !important;
         display: none !important;
     }
     footer {
-        visibility: hidden;
+        visibility: hidden !important;
+    }
+
+    /* 2. 强制全屏铺满（解决两边留白过大、图表太窄、字太小的问题） */
+    .main .block-container {
+        max-width: 98% !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+        padding-top: 1rem !important;
+    }
+
+    /* 3. 强制侧边栏常驻铺满屏幕左侧 */
+    section[data-testid="stSidebar"] {
+        display: block !important;
+        visibility: visible !important;
+        min-width: 280px !important;
+        max-width: 320px !important;
     }
     </style>
     """,
@@ -108,12 +125,18 @@ selected_factory = sidebar_manager.render_sidebar(
 )
 
 # ============================================================
-# 4. 安全防御：拦截重复的 set_page_config，并以沙箱隔离方式运行主脚本
+# 4. 安全运行主仪表盘脚本（保留全局 wide 布局）
 # ============================================================
 original_set_page_config = st.set_page_config
 
 def safe_set_page_config(*args, **kwargs):
-  pass  # 吞掉重复的配置调用，防止白屏
+  # 强制将后续任何 set_page_config 调用的 layout 都改为 wide
+  kwargs["layout"] = "wide"
+  kwargs["initial_sidebar_state"] = "expanded"
+  try:
+      original_set_page_config(*args, **kwargs)
+  except Exception:
+      pass
 
 st.set_page_config = safe_set_page_config
 

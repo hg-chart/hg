@@ -1,21 +1,22 @@
 # -*- coding: utf-8 -*-
 """设备运行数据分析系统 - 工厂安全隔离路由网关入口"""
 
-import streamlit as st
 import inspect
 import os
-import shutil
 import runpy
+import shutil
+import streamlit as st
 import streamlit_authenticator as stauth
+
 import r2_storage
 
 # ============================================================
-#  页面外观与【强锁侧边栏视觉】配置
+#  页面外观与【稳定左侧栏 + 释放右侧大片空白】配置
 # ============================================================
 st.set_page_config(
-    page_title="设备运行数据分析系统", 
+    page_title="设备运行数据分析系统",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 st.markdown(
@@ -25,7 +26,7 @@ st.markdown(
     div[data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
     footer { visibility: hidden !important; }
 
-    /* 【视觉强锁】：无论浏览器缓存怎么认为它收起了，直接用 CSS 强行把侧边栏拉出来并固定在左侧！ */
+    /* 【视觉强锁】：保证左侧栏永远固定在左侧显示 */
     section[data-testid="stSidebar"] {
         display: block !important;
         visibility: visible !important;
@@ -39,10 +40,13 @@ st.markdown(
         z-index: 999999 !important;
     }
 
-    /* 调整主内容区左边距，防止被强行固定的侧边栏遮挡 */
+    /* 调整主内容区左边距（避免被固定左侧栏遮挡），同时将 max-width 设为 100% 彻底消除右侧空白留白 */
     .main .block-container {
+        max-width: 100% !important;
+        width: 100% !important;
         padding-left: 350px !important;
         padding-right: 2rem !important;
+        padding-top: 1.5rem !important;
     }
     </style>
     """,
@@ -133,9 +137,13 @@ st.sidebar.markdown("---")
 st.sidebar.title("🏭 工厂工作区")
 
 if user_role == "admin" or allowed_factories == "ALL":
-  selected_factory = st.sidebar.selectbox("选择目标工厂", ALL_FACTORIES, key="factory_select_main_admin")
+  selected_factory = st.sidebar.selectbox(
+      "选择目标工厂", ALL_FACTORIES, key="factory_select_main_admin"
+  )
 else:
-  selected_factory = st.sidebar.selectbox("选择当前工厂", allowed_factories, key="factory_select_main_user")
+  selected_factory = st.sidebar.selectbox(
+      "选择当前工厂", allowed_factories, key="factory_select_main_user"
+  )
 
 st.sidebar.success(f"已连接工作区：\n**{selected_factory}**")
 st.sidebar.markdown("---")
@@ -179,13 +187,15 @@ except Exception:
 # ============================================================
 original_set_page_config = st.set_page_config
 
+
 def safe_set_page_config(*args, **kwargs):
   kwargs["layout"] = "wide"
   kwargs["initial_sidebar_state"] = "expanded"
   try:
-      original_set_page_config(*args, **kwargs)
+    original_set_page_config(*args, **kwargs)
   except Exception:
-      pass
+    pass
+
 
 st.set_page_config = safe_set_page_config
 

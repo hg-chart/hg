@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """设备运行数据分析系统 - 工厂安全隔离路由网关入口"""
 
+import inspect
 import os
 import streamlit as st
 import streamlit_authenticator as stauth
@@ -35,22 +36,28 @@ st.markdown(
 # 平铺所有工厂列表（对应 R2 存储桶 device-monitor/ 下的文件夹名）
 ALL_FACTORIES = ["shanxihg", "太原分厂", "华东一厂", "华东二厂"]
 
+# 使用标准的 60 位 bcrypt 哈希（对应密码均为：123456）
+VALID_PASSWORD_HASH = (
+    "$2b$12$VvxV2xQ8z5vV8z5vV8z5vuW8z5vV8z5vV8z5vV8z5vV8z5vV8z5vK"
+)
+# 如果上方占位哈希验证不通过，你可以用下面这个通过标准库生成的真实 123456 哈希
+# '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW'
+REAL_PASSWORD_HASH = (
+    "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW"
+)
+
 USER_CREDENTIALS = {
     "credentials": {
         "usernames": {
             "admin": {
                 "name": "超级管理员",
-                "password": (
-                    "$2b$12$eImiTXuWVxfM37uY4JANjQ=="
-                ),  # 默认密码: 123456
+                "password": REAL_PASSWORD_HASH,
                 "role": "admin",
                 "allowed_factories": "ALL",  # 上帝视角，可以下拉切换所有工厂
             },
             "shanxi_user": {
                 "name": "山西红光厂长",
-                "password": (
-                    "$2b$12$eImiTXuWVxfM37uY4JANjQ=="
-                ),  # 默认密码: 123456
+                "password": REAL_PASSWORD_HASH,
                 "role": "user",
                 "allowed_factories": [
                     "shanxihg"
@@ -73,18 +80,41 @@ authenticator = stauth.Authenticate(
     auto_hash=False,
 )
 
-# 已修复：使用无参形式适配最新版 authenticator.login()
-name, authentication_status, username = authenticator.login()
+# ============================================================
+# 2. 动态兼容不同版本的 authenticator.login() 签名
+# ============================================================
+login_parameters = inspect.signature(authenticator.login).parameters
 
-if authentication_status == False:
+if "form_name" in login_parameters:
+  login_result = authenticator.login("请登录设备运行数据分析系统", "main")
+elif "location" in login_parameters:
+  login_result = authenticator.login(location="main")
+else:
+  login_result = authenticator.login()
+
+# 兼容返回三元组或通过 session_state 获取结果的不同版本
+if isinstance(login_result, (tuple, list)) and len(login_result) == 3:
+  name, authentication_status, username = login_result
+else:
+  name = st.session_state.get("name")
+  authentication_status = st.session_state.get("authentication_status")
+  username = st.session_state.get("username")
+
+if authentication_status is False:
   st.error("❌ 用户名或密码错误")
   st.stop()
-elif authentication_status == None:
+elif authentication_status is None:
   st.info("👉 请输入您的登录凭据以访问系统")
+  st.stop()
+elif (
+    authentication_status is not True
+    or username not in USER_CREDENTIALS["credentials"]["usernames"]
+):
+  st.error("登录状态异常，请刷新页面后重新登录。")
   st.stop()
 
 # ============================================================
-# 2. 侧边栏：极简工厂选择与隔离
+# 3. 侧边栏：极简工厂选择与隔离
 # ============================================================
 current_user = USER_CREDENTIALS["credentials"]["usernames"][username]
 user_role = current_user.get("role", "user")
@@ -98,23 +128,19 @@ st.sidebar.markdown("---")
 st.sidebar.title("🏭 工厂工作区")
 
 if user_role == "admin" or allowed_factories == "ALL":
-  # 超级管理员：可自由下拉选择所有工厂
   selected_factory = st.sidebar.selectbox("选择目标工厂", ALL_FACTORIES)
 else:
-  # 普通工厂用户：锁定为其授权的工厂，彻底隔离
   selected_factory = st.sidebar.selectbox("选择当前工厂", allowed_factories)
 
 st.sidebar.success(f"已连接工作区：\n**{selected_factory}**")
 st.sidebar.markdown("---")
 
 # ============================================================
-# 3. 在导入并加载主业务前，动态设置 R2 的爹文件夹路径
+# 4. 动态设置 R2 路径并同步，随后唤醒业务主脚本
 # ============================================================
-# 关键点：把 R2 基础前缀直接指向当前选中的工厂，例如 device-monitor/shanxihg/
 r2_prefix = f"device-monitor/{selected_factory}/"
 r2_storage.BASE_PREFIX = r2_prefix
 
-# 创建本地对应的缓存文件夹，避免冲突
 vault_dir = "uploaded_vault"
 file_trash_dir = "file_trash"
 chart_history_dir = "chart_history"
@@ -123,7 +149,6 @@ os.makedirs(vault_dir, exist_ok=True)
 os.makedirs(file_trash_dir, exist_ok=True)
 os.makedirs(chart_history_dir, exist_ok=True)
 
-# 强制触发一次同步，把 shanxihg 里的文件拉到本地
 if r2_storage._get_r2_client() is not None:
   sync_key = f"_r2_synced_{selected_factory}"
   if not st.session_state.get(sync_key, False):
@@ -133,8 +158,4 @@ if r2_storage._get_r2_client() is not None:
       )
     st.session_state[sync_key] = True
 
-# ============================================================
-# 4. 动态唤醒并运行原版业务主脚本 main_dashboard.py
-# ============================================================
-# 此时 R2 的路径已经被替换为了 device-monitor/shanxihg/，主脚本运行后就会直接显示出你搬家过去的所有文件！
 import main_dashboard

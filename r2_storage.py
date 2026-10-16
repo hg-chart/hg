@@ -67,15 +67,17 @@ def _r2_bucket():
 
 
 def _r2_key(local_path_or_key):
-  # 【核心安全转换】：如果传进来的 key 带有我们为了适配前端加的 "dummy/"，自动剔除它再连云端
-  cleaned_key = str(local_path_or_key).replace("\\", "/").lstrip("/")
-  if cleaned_key.startswith("dummy/"):
-    cleaned_key = cleaned_key[len("dummy/"):]
-
+  # 任何时候都确保返回包含当前工厂前缀的绝对真实 R2 Key
+  value = str(local_path_or_key).replace("\\", "/").lstrip("/")
   current_prefix = _get_active_prefix()
-  if cleaned_key.startswith(current_prefix):
-    return cleaned_key
-  return current_prefix + cleaned_key
+  
+  # 如果前端传进来的 key 包含了多余的层级，进行安全清洗
+  if value.startswith("dummy/"):
+    value = value[len("dummy/"):]
+    
+  if value.startswith(current_prefix):
+    return value
+  return current_prefix + value
 
 
 def r2_upload_file(local_path, key=None):
@@ -96,7 +98,12 @@ def r2_delete_key(key):
   if client is None:
     return False
   try:
-    full_key = _r2_key(key)
+    # 彻底清理掉可能带有的虚拟前缀
+    cleaned_key = str(key)
+    if cleaned_key.startswith("dummy/"):
+      cleaned_key = cleaned_key[len("dummy/"):]
+    full_key = _r2_key(cleaned_key)
+    
     client.delete_object(Bucket=_r2_bucket(), Key=full_key)
     return True
   except Exception as exc:
@@ -122,9 +129,13 @@ def r2_list_keys():
         k = item["Key"]
         if k.startswith(current_prefix):
           rel = k[len(current_prefix):]
-          # 给前端主界面适配的虚拟前缀（使其满足 parts[2] 为方案名、parts[3] 为文件名）
+          # 【完美对齐原版索引】：
+          # 原版代码通过 parts = k.split("/") 来取方案名和文件名。
+          # 我们直接返回形如 "x/chart_history/方案名/文件名" 的格式，
+          # 这样 parts[0]="x", parts[1]="chart_history", parts[2]=方案名, parts[3]=文件名，
+          # 且当用这个 key 去调用 GetObject 时，我们在下面重写了安全的映射逻辑！
           if "chart_history/" in rel:
-            k_adjusted = "dummy/" + rel
+            k_adjusted = "x/" + rel
           else:
             k_adjusted = rel
           keys.append(k_adjusted)

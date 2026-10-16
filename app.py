@@ -12,11 +12,11 @@ import streamlit_authenticator as stauth
 import r2_storage
 
 # ============================================================
-# 0. 页面外观与基础配置
+# 0. 页面外观与基础配置（含侧边栏强制自动展开 JS）
 # ============================================================
 st.set_page_config(page_title="设备运行数据分析系统", layout="wide")
 
-# 隐藏右上角工具栏与页脚
+# 隐藏右上角工具栏与页脚，并注入自动展开侧边栏的脚本
 st.markdown(
     """
     <style>
@@ -27,7 +27,23 @@ st.markdown(
     footer {
         visibility: hidden;
     }
+    button[kind="header"] {
+        display: none !important;
+    }
     </style>
+
+    <script>
+    // 强制每次加载或登录刷新时，自动展开侧边栏
+    const expandSidebar = () => {
+        try {
+            const expandTrigger = window.parent.document.querySelector('[data-testid="collapsedControl"] button');
+            if (expandTrigger) {
+                expandTrigger.click();
+            }
+        } catch (e) {}
+    };
+    setTimeout(expandSidebar, 200);
+    </script>
     """,
     unsafe_allow_html=True,
 )

@@ -12,7 +12,7 @@ import streamlit_authenticator as stauth
 import r2_storage
 
 # ============================================================
-# 0. 页面外观与基础配置（强制侧边栏常驻展开，绝不收起）
+# 0. 页面外观与基础配置（强制清除侧边栏折叠缓存并锁定展开）
 # ============================================================
 st.set_page_config(page_title="设备运行数据分析系统", layout="wide")
 
@@ -28,19 +28,31 @@ st.markdown(
         visibility: hidden;
     }
 
-    /* 核心强制展开：无论何时何地，锁定侧边栏为显示状态且不许收起 */
+    /* 强制锁定侧边栏样式：永久显示，不准收缩 */
     section[data-testid="stSidebar"] {
         width: 320px !important;
         transform: none !important;
         visibility: visible !important;
     }
 
-    /* 彻底隐藏原来难看的收起按钮，防止用户点到 */
+    /* 彻底隐藏收起折叠按钮，杜绝用户误触 */
     button[kind="header"], [data-testid="collapsedControl"] {
         display: none !important;
         visibility: hidden !important;
     }
     </style>
+
+    <script>
+    // 主动清除浏览器本地记录的侧边栏折叠缓存，并强制恢复展开
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.includes('sidebarState')) {
+                localStorage.setItem(key, '"expanded"');
+            }
+        }
+    } catch (e) {}
+    </script>
     """,
     unsafe_allow_html=True,
 )

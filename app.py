@@ -11,7 +11,7 @@ import streamlit_authenticator as stauth
 import r2_storage
 
 # ============================================================
-#  页面外观与【强锁侧边栏视觉 + 显式折叠控制按钮】配置
+#  页面外观与【全屏拉满、消除右侧留白】配置
 # ============================================================
 st.set_page_config(
     page_title="设备运行数据分析系统",
@@ -26,7 +26,7 @@ st.markdown(
     div[data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
     footer { visibility: hidden !important; }
 
-    /* 【视觉强锁】：强行覆盖浏览器缓存导致的收起状态，固定在左侧 */
+    /* 侧边栏视觉强锁与固定定位 */
     section[data-testid="stSidebar"] {
         display: block !important;
         visibility: visible !important;
@@ -40,16 +40,19 @@ st.markdown(
         z-index: 999999 !important;
     }
 
-    /* 恢复并置顶渲染收起/展开按钮，确保用户能够正常交互 */
+    /* 恢复并置顶渲染收起/展开按钮 */
     [data-testid="collapsedControl"], button[kind="header"] {
         display: block !important;
         visibility: visible !important;
         z-index: 1000000 !important;
     }
 
-    /* 调整主内容区左边距，确保宽度拉满且不与侧边栏重叠 */
+    /* 【核心修复】：彻底解除最大宽度限制，让右侧留白区域全部用于图片和内容显示 */
     .main .block-container {
-        padding-left: 350px !important;
+        max-width: 100% !important;
+        width: calc(100% - 340px) !important;
+        margin-left: 320px !important;
+        padding-left: 2rem !important;
         padding-right: 2rem !important;
         padding-top: 1.5rem !important;
     }

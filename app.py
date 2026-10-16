@@ -27,26 +27,13 @@ st.markdown(
     div[data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
     footer { visibility: hidden !important; }
 
-    section[data-testid="stSidebar"] {
-        display: block !important;
-        visibility: visible !important;
-        transform: none !important;
-        width: 320px !important;
-        min-width: 320px !important;
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        height: 100vh !important;
-        z-index: 999999 !important;
-    }
-
-    /* 兼容新旧版 Streamlit 的主内容区选择器；右侧留白压到最小 */
+    /* 通用：主内容区左右留白压到最小（手机、电脑都适用） */
     .main .block-container,
     [data-testid="stMainBlockContainer"],
     div.block-container {
         max-width: 100% !important;
         width: 100% !important;
-        padding-left: 335px !important;  /* 侧边栏 320px + 15px 间隙 */
+        padding-left: 0.8rem !important;
         padding-right: 0.5rem !important;
         padding-top: 1.5rem !important;
         padding-bottom: 1rem !important;
@@ -54,6 +41,28 @@ st.markdown(
     [data-testid="stMain"],
     [data-testid="stAppViewContainer"] {
         padding-right: 0 !important;
+    }
+
+    /* 仅电脑端（宽度>768px）：侧边栏固定显示在左侧，主内容让出 335px。
+       手机端不强制，使用 Streamlit 自带布局，登录框才能正常显示 */
+    @media (min-width: 769px) {
+        section[data-testid="stSidebar"] {
+            display: block !important;
+            visibility: visible !important;
+            transform: none !important;
+            width: 320px !important;
+            min-width: 320px !important;
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            height: 100vh !important;
+            z-index: 999999 !important;
+        }
+        .main .block-container,
+        [data-testid="stMainBlockContainer"],
+        div.block-container {
+            padding-left: 335px !important;  /* 侧边栏 320px + 15px 间隙 */
+        }
     }
     /* 图片撑满可用宽度 */
     [data-testid="stImage"], [data-testid="stImage"] img {

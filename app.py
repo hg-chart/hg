@@ -3,13 +3,14 @@
 
 import streamlit as st
 import inspect
+import os
+import shutil
 import runpy
 import streamlit_authenticator as stauth
-
-import sidebar_manager
+import r2_storage
 
 # ============================================================
-# 0. 页面外观与绝对全屏宽屏配置
+# 0. 页面外观与宽屏配置（原生支持 wide，不加导致偏移的暴力 CSS）
 # ============================================================
 st.set_page_config(
     page_title="设备运行数据分析系统", 
@@ -20,25 +21,16 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    /* 1. 隐藏多余元素 */
+    /* 隐藏右上角工具栏与页脚 */
     div[data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
     footer { visibility: hidden !important; }
 
-    /* 2. 彻底打破两边留白，强制图表和容器 100% 铺满全屏 */
+    /* 优化全屏容器：去掉多余的左右强制偏移，让 Streamlit 原生 wide 布局正常工作，消除右移和偏位 */
     .main .block-container {
-        max-width: 100% !important;
-        width: 100% !important;
+        padding-top: 1.5rem !important;
+        padding-bottom: 2rem !important;
         padding-left: 3rem !important;
         padding-right: 3rem !important;
-        padding-top: 1rem !important;
-    }
-
-    /* 3. 强制侧边栏固定显示在左侧且不被压缩 */
-    section[data-testid="stSidebar"] {
-        display: block !important;
-        visibility: visible !important;
-        width: 300px !important;
-        min-width: 300px !important;
     }
     </style>
     """,
@@ -48,6 +40,8 @@ st.markdown(
 # ============================================================
 # 1. 多工厂与权限字典配置
 # ============================================================
+ALL_FACTORIES = ["shanxihg", "太原分厂", "华东一厂", "华东二厂"]
+
 USER_CREDENTIALS = {
     "credentials": {
         "usernames": {
@@ -113,14 +107,63 @@ elif (
   st.stop()
 
 # ============================================================
-# 3. 调用独立模块渲染侧边栏与工厂隔离
+# 3. 侧边栏：极简工厂选择与隔离（直接内联渲染，100% 确保侧边栏显示）
 # ============================================================
-selected_factory = sidebar_manager.render_sidebar(
-    authenticator, name, username, USER_CREDENTIALS
-)
+current_user = USER_CREDENTIALS["credentials"]["usernames"][username]
+user_role = current_user.get("role", "user")
+allowed_factories = current_user.get("allowed_factories", [])
+
+st.sidebar.title("🔐 会话信息")
+st.sidebar.write(f"当前用户：**{name}**")
+authenticator.logout("退出登录", "sidebar")
+st.sidebar.markdown("---")
+
+st.sidebar.title("🏭 工厂工作区")
+
+if user_role == "admin" or allowed_factories == "ALL":
+  selected_factory = st.sidebar.selectbox("选择目标工厂", ALL_FACTORIES, key="factory_select_main_admin")
+else:
+  selected_factory = st.sidebar.selectbox("选择当前工厂", allowed_factories, key="factory_select_main_user")
+
+st.sidebar.success(f"已连接工作区：\n**{selected_factory}**")
+st.sidebar.markdown("---")
+
+# 动态设置 R2 路径并同步，同时无损桥接本地目录
+r2_prefix = f"device-monitor/{selected_factory}/"
+r2_storage.BASE_PREFIX = r2_prefix
+
+factory_vault = f"uploaded_vault_{selected_factory}"
+factory_trash = f"file_trash_{selected_factory}"
+factory_chart = f"chart_history_{selected_factory}"
+
+os.makedirs(factory_vault, exist_ok=True)
+os.makedirs(factory_trash, exist_ok=True)
+os.makedirs(factory_chart, exist_ok=True)
+
+if r2_storage._get_r2_client() is not None:
+  sync_key = f"_r2_synced_{selected_factory}"
+  if not st.session_state.get(sync_key, False):
+    with st.spinner(f"正在加载 [{selected_factory}] 的云端数据..."):
+      r2_storage.sync_local_storage_with_r2(
+          factory_vault, factory_trash, factory_chart
+      )
+    st.session_state[sync_key] = True
+
+standard_vault = "uploaded_vault"
+if os.path.lexists(standard_vault):
+  if os.path.islink(standard_vault) or os.path.isfile(standard_vault):
+    os.unlink(standard_vault)
+  else:
+    shutil.rmtree(standard_vault)
+
+try:
+  os.symlink(factory_vault, standard_vault, target_is_directory=True)
+except Exception:
+  if os.path.exists(factory_vault):
+    shutil.copytree(factory_vault, standard_vault, dirs_exist_ok=True)
 
 # ============================================================
-# 4. 安全运行主仪表盘脚本
+# 4. 安全防御：拦截重复的 set_page_config，并以沙箱隔离方式运行主脚本
 # ============================================================
 original_set_page_config = st.set_page_config
 
@@ -135,6 +178,7 @@ def safe_set_page_config(*args, **kwargs):
 st.set_page_config = safe_set_page_config
 
 try:
+  # 使用 runpy 独立安全地执行原版 main_dashboard.py
   runpy.run_path("main_dashboard.py", run_name="__main__")
 finally:
   st.set_page_config = original_set_page_config

@@ -73,7 +73,7 @@ authenticator = stauth.Authenticate(
     auto_hash=False,
 )
 
-name, authentication_status, username = authenticator.login(
+name, authentication_status, username = authenticator.login('main')(
     "请登录设备运行数据分析系统", location="main"
 )
 

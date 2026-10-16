@@ -147,26 +147,21 @@ if r2_storage._get_r2_client() is not None:
     st.session_state[sync_key] = True
 
 # 关键魔法：将该工厂的专属目录“镜像映射”给原版 main_dashboard.py 默认读取的文件夹名
-# 这样原版代码不需要做任何改动，直接就能读到当前工厂的数据！
 standard_vault = "uploaded_vault"
-standard_trash = "file_trash_vault"
-standard_chart = "chart_history"
 
-if os.path.exists(standard_vault):
-  try:
+# 安全清理旧的映射或文件夹（已修复 rmtree 不能删符号链接的报错）
+if os.path.lexists(standard_vault):
+  if os.path.islink(standard_vault) or os.path.isfile(standard_vault):
+    os.unlink(standard_vault)
+  else:
     shutil.rmtree(standard_vault)
-  except Exception:
-    pass
 
-# 使用软链接或者直接拷贝映射，确保原版脚本读取正常
+# 建立软链接，若失败则退化为拷贝目录
 try:
   os.symlink(factory_vault, standard_vault, target_is_directory=True)
 except Exception:
-  # 如果系统不支持软链接，则直接做一次目录复制
   if os.path.exists(factory_vault):
-    if os.path.exists(standard_vault):
-      shutil.rmtree(standard_vault)
-    shutil.copytree(factory_vault, standard_vault)
+    shutil.copytree(factory_vault, standard_vault, dirs_exist_ok=True)
 
 # ============================================================
 # 5. 直接唤醒并运行你原封未动的业务主脚本

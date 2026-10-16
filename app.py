@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """设备运行数据分析系统 - 工厂安全隔离路由网关入口"""
 
+import importlib
 import inspect
 import os
 import shutil
 import sys
-from unittest.mock import MagicMock
 import streamlit as st
 import streamlit_authenticator as stauth
 
@@ -163,20 +163,20 @@ except Exception:
     shutil.copytree(factory_vault, standard_vault, dirs_exist_ok=True)
 
 # ============================================================
-# 5. 安全防御：拦截重复的 set_page_config，随后加载原版主脚本
+# 5. 安全防御：拦截重复的 set_page_config，并每次重跑时动态执行主脚本
 # ============================================================
-# 原版 main_dashboard.py 带有自己的 st.set_page_config，
-# 通过此处的代理拦截，防止触发 Streamlit 重复配置报错（白屏）。
 original_set_page_config = st.set_page_config
 
 
 def safe_set_page_config(*args, **kwargs):
-  pass  # 忽略后续重复调用，保持页面稳定
+  pass  # 吞掉重复的配置调用，防止白屏
 
 
 st.set_page_config = safe_set_page_config
 
 try:
   import main_dashboard
+
+  importlib.reload(main_dashboard)
 finally:
   st.set_page_config = original_set_page_config

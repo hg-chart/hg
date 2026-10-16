@@ -1,0 +1,156 @@
+# -*- coding: utf-8 -*-
+"""模块六：云端历史图表检索与回收站管理"""
+import os
+import shutil
+import streamlit as st
+import r2_storage
+
+
+def render_cloud_chart_manager(chart_history_dir, chart_trash_dir):
+    """渲染云端历史图表按标签检索、查看、下载及图片回收站管理界面"""
+    st.markdown("---")
+    st.subheader("☁️ 云端历史对比趋势图按标签检索与调用")
+
+    if r2_storage._get_r2_client() is not None:
+        if st.button("🔄 刷新云端图片列表", key="refresh_chart_list"):
+            st.rerun()
+            
+        all_keys = r2_storage.r2_list_keys()
+        if all_keys:
+            chart_keys = [k for k in all_keys if "chart_history/" in k and k.endswith(".png")]
+            
+            if chart_keys:
+                schemes_dict = {}
+                for k in chart_keys:
+                    parts = k.split("/")
+                    if len(parts) >= 4:
+                        scheme = parts[2]
+                        filename = parts[3]
+                        if scheme not in schemes_dict:
+                            schemes_dict[scheme] = {}
+                        
+                        tag_parts = filename.split("_")
+                        if len(tag_parts) >= 2:
+                            tag = f"{tag_parts[0]}_{tag_parts[1]}"
+                        else:
+                            tag = filename.split(".")[0]
+                        
+                        schemes_dict[scheme][tag] = (filename, k)
+                
+                if schemes_dict:
+                    selected_scheme = st.selectbox(
+                        "📁 选择时间段方案大类", 
+                        ["-- 请选择 --"] + list(schemes_dict.keys()), 
+                        key="sel_scheme"
+                    )
+                    
+                    available_tags = ["-- 请选择 --"]
+                    if selected_scheme and selected_scheme != "-- 请选择 --":
+                        available_tags += sorted(list(schemes_dict[selected_scheme].keys()))
+                    
+                    selected_tag = st.selectbox(
+                        "🏷️ 选择负荷标签筛选", 
+                        available_tags, 
+                        key="sel_tag"
+                    )
+                    
+                    if st.button("🔍 查看选中的图片", type="primary", key="btn_view_chart"):
+                        if selected_scheme == "-- 请选择 --" or selected_tag == "-- 请选择 --":
+                            st.warning("请同时选择“时间段方案大类”和“负荷标签筛选”。")
+                        else:
+                            scheme_data = schemes_dict.get(selected_scheme, {})
+                            if selected_tag in scheme_data:
+                                selected_file_name, target_key = scheme_data[selected_tag]
+                                st.session_state["active_chart_key"] = target_key
+                                st.session_state["active_chart_name"] = selected_file_name
+                                st.session_state["active_chart_scheme"] = selected_scheme
+                                st.session_state["active_chart_tag"] = selected_tag
+                            else:
+                                st.session_state.pop("active_chart_key", None)
+                                st.info(f"在方案“{selected_scheme}”下暂未找到标签为“{selected_tag}”的图片。")
+
+                    if "active_chart_key" in st.session_state:
+                        target_key = st.session_state["active_chart_key"]
+                        selected_file_name = st.session_state["active_chart_name"]
+                        active_scheme = st.session_state.get("active_chart_scheme", "")
+                        active_tag = st.session_state.get("active_chart_tag", "")
+                        
+                        client = r2_storage._get_r2_client()
+                        try:
+                            resp = client.get_object(Bucket=r2_storage._r2_bucket(), Key=target_key)
+                            img_bytes = resp["Body"].read()
+                            
+                            st.markdown("---")
+                            st.image(img_bytes, caption=f"云端图片：{active_scheme} ➔ {active_tag}", use_container_width=True)
+                            
+                            act_c1, act_c2 = st.columns(2)
+                            with act_c1:
+                                st.download_button(
+                                    label="⬇️ 下载调用的云端图片",
+                                    data=img_bytes,
+                                    file_name=selected_file_name,
+                                    mime="image/png",
+                                    key="dl_cloud_img"
+                                )
+                            with act_c2:
+                                if st.button("🗑️ 将此图片移入回收站", key="btn_del_cloud_img"):
+                                    trash_composite_name = f"{active_scheme}___{selected_file_name}"
+                                    local_trash_path = os.path.join(chart_trash_dir, trash_composite_name)
+                                    with open(local_trash_path, "wb") as tf:
+                                        tf.write(img_bytes)
+                                    
+                                    r2_storage.r2_delete_key(target_key)
+                                    st.session_state.pop("active_chart_key", None)
+                                    st.success("图片已成功移入回收站，并从当前方案目录彻底清除！")
+                                    st.rerun()
+                        except Exception as e:
+                            st.error(f"从云端加载图片失败：{e}")
+                else:
+                    st.info("未解析到有效的方案大类。")
+            else:
+                st.info("云端暂无保存的历史图片。")
+        else:
+            st.info("无法读取云端文件列表或存储桶为空。")
+
+        # 图片回收站管理
+        trashed_charts = sorted(
+            name for name in os.listdir(chart_trash_dir)
+            if name.lower().endswith(".png")
+        )
+        if trashed_charts:
+            with st.expander("🗑️ 图片回收站（管理已删除的历史图片）", expanded=False):
+                st.write("以下是被删除的历史图片，您可以选择恢复或彻底删除：")
+                for t_img in trashed_charts:
+                    if "___" not in t_img:
+                        bad_path = os.path.join(chart_trash_dir, t_img)
+                        if os.path.exists(bad_path):
+                            os.remove(bad_path)
+                        continue
+
+                    orig_scheme, orig_filename = t_img.split("___", 1)
+                    tc1, tc2, tc3 = st.columns([4, 1, 1])
+                    with tc1:
+                        st.text(f"🖼️ [{orig_scheme}] {orig_filename}")
+                    with tc2:
+                        if st.button("♻️ 恢复", key=f"restore_chart_{t_img}", use_container_width=True):
+                            src_path = os.path.join(chart_trash_dir, t_img)
+                            dest_path = os.path.join(chart_history_dir, orig_filename)
+                            
+                            if os.path.exists(src_path):
+                                shutil.copy(src_path, dest_path)
+                                r2_storage.r2_upload_file(dest_path, key=f"chart_history/{orig_scheme}/{orig_filename}")
+                                os.remove(src_path)
+                                if os.path.exists(dest_path):
+                                    os.remove(dest_path)
+                                    
+                                st.success(f"已成功将图片恢复至原方案：“{orig_scheme}”！")
+                                st.rerun()
+                    with tc3:
+                        if st.button("🔥 彻底删除", key=f"perma_del_chart_{t_img}", use_container_width=True):
+                            src_path = os.path.join(chart_trash_dir, t_img)
+                            if os.path.exists(src_path):
+                                os.remove(src_path)
+                            st.success(f"已彻底删除图片：{orig_filename}")
+                            st.rerun()
+    else:
+        st.info("请先配置并连接 Cloudflare R2 存储桶以使用云端图片检索功能。")

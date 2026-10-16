@@ -7,9 +7,9 @@ import r2_storage
 
 
 def render_cloud_chart_manager(chart_history_dir, chart_trash_dir):
-    """渲染云端历史图表按标签检索、查看、下载及图片回收站管理界面（兼容区间标签解析）"""
+    """渲染云端历史图表按三级（方案大类、右纵轴来源、负荷标签）检索与调用界面"""
     st.markdown("---")
-    st.subheader("☁️ 云端历史对比趋势图按标签检索与调用")
+    st.subheader("☁️ 云端历史对比趋势图按来源与标签检索调用")
 
     if r2_storage._get_r2_client() is not None:
         if st.button("🔄 刷新云端图片列表", key="refresh_chart_list"):
@@ -20,42 +20,77 @@ def render_cloud_chart_manager(chart_history_dir, chart_trash_dir):
             chart_keys = [k for k in all_keys if "chart_history/" in k and k.endswith(".png")]
             
             if chart_keys:
+                # 嵌套字典结构：schemes_dict[scheme][pressure_source][load_tag] = (filename, key)
                 schemes_dict = {}
                 for k in chart_keys:
                     parts = k.split("/")
                     if len(parts) >= 4:
                         scheme = parts[2]
                         filename = parts[3]
+                        
                         if scheme not in schemes_dict:
                             schemes_dict[scheme] = {}
                         
-                        # 优化标签解析：兼容 "负荷_240_250_xxx.png" 或 "负荷_240_xxx.png" 等格式
-                        tag_parts = filename.split("_")
-                        if len(tag_parts) >= 4 and tag_parts[0] == "负荷" and tag_parts[1].replace('.', '', 1).isdigit() and tag_parts[2].replace('.', '', 1).isdigit():
-                            # 属于区间格式，例如 负荷_240_250
-                            tag = f"{tag_parts[0]}_{tag_parts[1]}_{tag_parts[2]}"
-                        elif len(tag_parts) >= 3 and tag_parts[0] == "负荷" and tag_parts[1] == "上限":
-                            tag = f"{tag_parts[0]}_{tag_parts[1]}_{tag_parts[2]}"
-                        elif len(tag_parts) >= 3 and tag_parts[0] == "负荷" and tag_parts[1].replace('.', '', 1).isdigit():
-                            # 属于单值格式，例如 负荷_240
-                            tag = f"{tag_parts[0]}_{tag_parts[1]}"
-                        elif len(tag_parts) >= 2 and tag_parts[0] == "负荷" and tag_parts[1] == "全部":
-                            tag = "负荷_全部"
-                        else:
-                            tag = filename.split(".")[0]
+                        # 解析文件名结构：[压差来源]_[负荷标签部分]_[时间戳].png
+                        # 例如: W3.FW.AHTE10CP201F_负荷_260_270_20261017_120000.png
+                        # 我们通过倒数第二段和倒数第三段来切分时间戳，前面即为 压差数据来源
+                        name_no_ext = filename.rsplit(".", 1)[0]
+                        name_parts = name_no_ext.split("_")
                         
-                        schemes_dict[scheme][tag] = (filename, k)
+                        # 寻找 "负荷" 关键词的位置
+                        load_idx = -1
+                        for idx, p in enumerate(name_parts):
+                            if p == "负荷":
+                                load_idx = idx
+                                break
+                        
+                        if load_idx > 0:
+                            pressure_source = "_".join(name_parts[:load_idx])
+                            tag_parts = name_parts[load_idx:]
+                            
+                            # 提取负荷标签
+                            if len(tag_parts) >= 3 and tag_parts[1].replace('.', '', 1).isdigit() and tag_parts[2].replace('.', '', 1).isdigit():
+                                load_tag = f"{tag_parts[0]}_{tag_parts[1]}_{tag_parts[2]}"
+                            elif len(tag_parts) >= 3 and tag_parts[1] == "上限":
+                                load_tag = f"{tag_parts[0]}_{tag_parts[1]}_{tag_parts[2]}"
+                            elif len(tag_parts) >= 2 and tag_parts[1].replace('.', '', 1).isdigit():
+                                load_tag = f"{tag_parts[0]}_{tag_parts[1]}"
+                            elif len(tag_parts) >= 2 and tag_parts[1] == "全部":
+                                load_tag = "负荷_全部"
+                            else:
+                                load_tag = "_".join(tag_parts[:2])
+                        else:
+                            pressure_source = "未知数据来源"
+                            load_tag = name_no_ext
+
+                        if pressure_source not in schemes_dict[scheme]:
+                            schemes_dict[scheme][pressure_source] = {}
+                        
+                        schemes_dict[scheme][pressure_source][load_tag] = (filename, k)
                 
                 if schemes_dict:
+                    # 第一级：选择时间段方案大类
                     selected_scheme = st.selectbox(
                         "📁 选择时间段方案大类", 
                         ["-- 请选择 --"] + list(schemes_dict.keys()), 
                         key="sel_scheme"
                     )
                     
-                    available_tags = ["-- 请选择 --"]
+                    # 第二级：选择右纵轴数据来源
+                    available_pressures = ["-- 请选择 --"]
                     if selected_scheme and selected_scheme != "-- 请选择 --":
-                        available_tags += sorted(list(schemes_dict[selected_scheme].keys()))
+                        available_pressures += sorted(list(schemes_dict[selected_scheme].keys()))
+                    
+                    selected_pressure = st.selectbox(
+                        "📈 选择右纵轴数据来源（压差列名）", 
+                        available_pressures, 
+                        key="sel_pressure"
+                    )
+                    
+                    # 第三级：选择负荷标签
+                    available_tags = ["-- 请选择 --"]
+                    if selected_scheme != "-- 请选择 --" and selected_pressure != "-- 请选择 --":
+                        available_tags += sorted(list(schemes_dict[selected_scheme][selected_pressure].keys()))
                     
                     selected_tag = st.selectbox(
                         "🏷️ 选择负荷标签筛选", 
@@ -64,24 +99,26 @@ def render_cloud_chart_manager(chart_history_dir, chart_trash_dir):
                     )
                     
                     if st.button("🔍 查看选中的图片", type="primary", key="btn_view_chart"):
-                        if selected_scheme == "-- 请选择 --" or selected_tag == "-- 请选择 --":
-                            st.warning("请同时选择“时间段方案大类”和“负荷标签筛选”。")
+                        if selected_scheme == "-- 请选择 --" or selected_pressure == "-- 请选择 --" or selected_tag == "-- 请选择 --":
+                            st.warning("请完整选择“时间段方案大类”、“右纵轴数据来源”和“负荷标签”。")
                         else:
-                            scheme_data = schemes_dict.get(selected_scheme, {})
-                            if selected_tag in scheme_data:
-                                selected_file_name, target_key = scheme_data[selected_tag]
+                            pressure_data = schemes_dict.get(selected_scheme, {}).get(selected_pressure, {})
+                            if selected_tag in pressure_data:
+                                selected_file_name, target_key = pressure_data[selected_tag]
                                 st.session_state["active_chart_key"] = target_key
                                 st.session_state["active_chart_name"] = selected_file_name
                                 st.session_state["active_chart_scheme"] = selected_scheme
+                                st.session_state["active_chart_pressure"] = selected_pressure
                                 st.session_state["active_chart_tag"] = selected_tag
                             else:
                                 st.session_state.pop("active_chart_key", None)
-                                st.info(f"在方案“{selected_scheme}”下暂未找到标签为“{selected_tag}”的图片。")
+                                st.info(f"在当前条件下暂未找到对应的历史图片。")
 
                     if "active_chart_key" in st.session_state:
                         target_key = st.session_state["active_chart_key"]
                         selected_file_name = st.session_state["active_chart_name"]
                         active_scheme = st.session_state.get("active_chart_scheme", "")
+                        active_pressure = st.session_state.get("active_chart_pressure", "")
                         active_tag = st.session_state.get("active_chart_tag", "")
                         
                         client = r2_storage._get_r2_client()
@@ -90,7 +127,7 @@ def render_cloud_chart_manager(chart_history_dir, chart_trash_dir):
                             img_bytes = resp["Body"].read()
                             
                             st.markdown("---")
-                            st.image(img_bytes, caption=f"云端图片：{active_scheme} ➔ {active_tag}", use_container_width=True)
+                            st.image(img_bytes, caption=f"云端图片：{active_scheme} ➔ {active_pressure} ➔ {active_tag}", use_container_width=True)
                             
                             act_c1, act_c2 = st.columns(2)
                             with act_c1:

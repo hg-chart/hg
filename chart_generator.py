@@ -14,8 +14,16 @@ COLUMN_ALIASES = {
     "负荷": "W3.UNIT1.10DEHDCSAI03",
 }
 
+def format_num(val):
+    """辅助函数：如果是整数则不带小数点，保持输入原貌"""
+    if val is None:
+        return ""
+    if isinstance(val, float) and val.is_integer():
+        return str(int(val))
+    return str(val)
+
 def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid):
-    """渲染生成趋势图的触发按钮及预览界面（支持负荷区间过滤）"""
+    """渲染生成趋势图的触发按钮及预览界面（支持负荷区间、无小数点显示及右纵轴命名）"""
     if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
         if not filter_valid:
             st.error("请先修正负荷过滤条件的输入错误。")
@@ -78,6 +86,16 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                     diagnostics = []
                     periods_detailed_info = []
 
+                    # 格式化负荷条件文本（严格按照输入数值，无多余小数点）
+                    if min_threshold is not None and max_threshold is not None:
+                        cond_str_clean = f"{format_num(min_threshold)}-{format_num(max_threshold)}"
+                    elif min_threshold is not None:
+                        cond_str_clean = f"≥{format_num(min_threshold)}"
+                    elif max_threshold is not None:
+                        cond_str_clean = f"≤{format_num(max_threshold)}"
+                    else:
+                        cond_str_clean = "全部"
+
                     for index, interval in enumerate(st.session_state.intervals):
                         start_dt = pd.to_datetime(interval["start"])
                         end_dt = pd.to_datetime(interval["end"])
@@ -103,11 +121,11 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                             config_str = f"多频集速运行{run_value}s/停止{stop_value}s"
 
                         if min_threshold is not None and max_threshold is not None:
-                            time_prefix = f"负荷 {min_threshold} ~ {max_threshold}，机组实际运行时间"
+                            time_prefix = f"负荷 {format_num(min_threshold)}-{format_num(max_threshold)}，机组实际运行时间"
                         elif min_threshold is not None:
-                            time_prefix = f"负荷≥{min_threshold}，机组实际运行时间"
+                            time_prefix = f"负荷≥{format_num(min_threshold)}，机组实际运行时间"
                         elif max_threshold is not None:
-                            time_prefix = f"负荷≤{max_threshold}，机组实际运行时间"
+                            time_prefix = f"负荷≤{format_num(max_threshold)}，机组实际运行时间"
                         else:
                             time_prefix = "机组实际运行时间"
 
@@ -209,16 +227,7 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                             frameon=True,
                         )
 
-                        if min_threshold is not None and max_threshold is not None:
-                            chart_title_threshold = f"区间 [{min_threshold}, {max_threshold}]"
-                        elif min_threshold is not None:
-                            chart_title_threshold = f"≥ {min_threshold}"
-                        elif max_threshold is not None:
-                            chart_title_threshold = f"≤ {max_threshold}"
-                        else:
-                            chart_title_threshold = "全部"
-
-                        chart_title = f"机组负荷/压差对比趋势图（负荷条件：{chart_title_threshold}）"
+                        chart_title = f"机组负荷/压差对比趋势图（负荷条件：{cond_str_clean}）"
                         plt.title(chart_title, fontsize=14, pad=20)
 
                         buf = io.BytesIO()
@@ -227,6 +236,8 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                         st.session_state.plotted_fig_bytes = buf.getvalue()
                         st.session_state.plotted_title = chart_title
                         st.session_state.plotted_periods_info = periods_detailed_info
+                        # 暂存当前右纵轴数据来源，供 R2 存储时使用
+                        st.session_state["current_pressure_col"] = actual_pressure_col
                         plt.close(fig)
                         st.success("多时段对比趋势图生成成功！")
 
@@ -243,11 +254,11 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
 
         with st.container(border=True):
             if min_threshold is not None and max_threshold is not None:
-                current_threshold_str = f"负荷区间 [{min_threshold}, {max_threshold}]"
+                current_threshold_str = f"负荷区间 {format_num(min_threshold)}-{format_num(max_threshold)}"
             elif min_threshold is not None:
-                current_threshold_str = f"负荷≥{min_threshold}"
+                current_threshold_str = f"负荷≥{format_num(min_threshold)}"
             elif max_threshold is not None:
-                current_threshold_str = f"负荷≤{max_threshold}"
+                current_threshold_str = f"负荷≤{format_num(max_threshold)}"
             else:
                 current_threshold_str = "全部负荷"
 
@@ -296,18 +307,22 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                         elif not scheme_name:
                             scheme_name = "未命名时间段方案"
                         
-                        # 生成兼容单值或区间的负荷标签
+                        # 获取当前的右纵轴数据来源作为命名组成部分
+                        p_col_current = st.session_state.get("current_pressure_col", pressure_col)
+                        
+                        # 生成负荷标签部分（无多余小数点）
                         if min_threshold is not None and max_threshold is not None:
-                            load_tag_str = f"负荷_{min_threshold}_{max_threshold}"
+                            load_tag_str = f"负荷_{format_num(min_threshold)}_{format_num(max_threshold)}"
                         elif min_threshold is not None:
-                            load_tag_str = f"负荷_{min_threshold}"
+                            load_tag_str = f"负荷_{format_num(min_threshold)}"
                         elif max_threshold is not None:
-                            load_tag_str = f"负荷_上限_{max_threshold}"
+                            load_tag_str = f"负荷_上限_{format_num(max_threshold)}"
                         else:
                             load_tag_str = "负荷_全部"
 
                         time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
-                        chart_filename = f"{load_tag_str}_{time_str}.png"
+                        # 文件名格式：[压差来源]_[负荷标签]_[时间戳].png
+                        chart_filename = f"{p_col_current}_{load_tag_str}_{time_str}.png"
                         
                         chart_local_path = os.path.join("chart_history", chart_filename)
                         with open(chart_local_path, "wb") as img_file:
@@ -315,7 +330,7 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                         
                         success = r2_storage.r2_upload_file(chart_local_path, key=f"chart_history/{scheme_name}/{chart_filename}")
                         if success:
-                            st.success(f"图片已成功归类保存至 R2！\n📁 分类目录：`{scheme_name}`\n🏷️ 负荷标签：`{load_tag_str}`")
+                            st.success(f"图片已成功归类保存至 R2！\n📁 分类目录：`{scheme_name}`\n🏷️ 命名规范：`{chart_filename}`")
                         else:
                             st.error("同步到 Cloudflare R2 失败，请检查网络或配置。")
                     except Exception as e:

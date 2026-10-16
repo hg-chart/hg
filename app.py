@@ -31,37 +31,24 @@ st.markdown(
 )
 
 # ============================================================
-# 1. 多工厂与权限字典配置
+# 1. 多工厂与权限字典配置（直接使用明文密码，开启自动哈希）
 # ============================================================
-# 平铺所有工厂列表（对应 R2 存储桶 device-monitor/ 下的文件夹名）
 ALL_FACTORIES = ["shanxihg", "太原分厂", "华东一厂", "华东二厂"]
-
-# 使用标准的 60 位 bcrypt 哈希（对应密码均为：123456）
-VALID_PASSWORD_HASH = (
-    "$2b$12$VvxV2xQ8z5vV8z5vV8z5vuW8z5vV8z5vV8z5vV8z5vV8z5vV8z5vK"
-)
-# 如果上方占位哈希验证不通过，你可以用下面这个通过标准库生成的真实 123456 哈希
-# '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW'
-REAL_PASSWORD_HASH = (
-    "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW"
-)
 
 USER_CREDENTIALS = {
     "credentials": {
         "usernames": {
             "admin": {
                 "name": "超级管理员",
-                "password": REAL_PASSWORD_HASH,
+                "password": "123456",  # 启用 auto_hash=True 后，系统会自动加密
                 "role": "admin",
-                "allowed_factories": "ALL",  # 上帝视角，可以下拉切换所有工厂
+                "allowed_factories": "ALL",
             },
             "shanxi_user": {
                 "name": "山西红光厂长",
-                "password": REAL_PASSWORD_HASH,
+                "password": "123456",  # 启用 auto_hash=True 后，系统会自动加密
                 "role": "user",
-                "allowed_factories": [
-                    "shanxihg"
-                ],  # 只能看到 shanxihg，对其余工厂无感知
+                "allowed_factories": ["shanxihg"],
             },
         }
     },
@@ -72,12 +59,13 @@ USER_CREDENTIALS = {
     },
 }
 
+# 关键：开启 auto_hash=True，让库自动处理明文密码的加密校验
 authenticator = stauth.Authenticate(
     USER_CREDENTIALS["credentials"],
     USER_CREDENTIALS["cookie"]["name"],
     USER_CREDENTIALS["cookie"]["key"],
     USER_CREDENTIALS["cookie"]["expiry_days"],
-    auto_hash=False,
+    auto_hash=True,
 )
 
 # ============================================================
@@ -92,7 +80,6 @@ elif "location" in login_parameters:
 else:
   login_result = authenticator.login()
 
-# 兼容返回三元组或通过 session_state 获取结果的不同版本
 if isinstance(login_result, (tuple, list)) and len(login_result) == 3:
   name, authentication_status, username = login_result
 else:

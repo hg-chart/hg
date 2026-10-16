@@ -1,22 +1,21 @@
 # -*- coding: utf-8 -*-
 """设备运行数据分析系统 - 工厂安全隔离路由网关入口"""
 
+import streamlit as st
 import inspect
 import os
-import runpy
 import shutil
-import streamlit as st
+import runpy
 import streamlit_authenticator as stauth
-
 import r2_storage
 
 # ============================================================
-# 0. 页面外观与标准原生宽屏配置（清理所有破坏性 CSS）
+#  页面外观与【强锁侧边栏视觉】配置
 # ============================================================
 st.set_page_config(
-    page_title="设备运行数据分析系统",
+    page_title="设备运行数据分析系统", 
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded"
 )
 
 st.markdown(
@@ -26,10 +25,24 @@ st.markdown(
     div[data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
     footer { visibility: hidden !important; }
 
-    /* 仅微调边距，绝不改动任何定位和宽度 */
+    /* 【视觉强锁】：无论浏览器缓存怎么认为它收起了，直接用 CSS 强行把侧边栏拉出来并固定在左侧！ */
+    section[data-testid="stSidebar"] {
+        display: block !important;
+        visibility: visible !important;
+        transform: none !important;
+        width: 320px !important;
+        min-width: 320px !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        height: 100vh !important;
+        z-index: 999999 !important;
+    }
+
+    /* 调整主内容区左边距，防止被强行固定的侧边栏遮挡 */
     .main .block-container {
-        padding-top: 1.5rem !important;
-        padding-bottom: 2rem !important;
+        padding-left: 350px !important;
+        padding-right: 2rem !important;
     }
     </style>
     """,
@@ -106,7 +119,7 @@ elif (
   st.stop()
 
 # ============================================================
-# 3. 侧边栏：原生渲染工厂选择与隔离
+# 3. 侧边栏：极简工厂选择与隔离
 # ============================================================
 current_user = USER_CREDENTIALS["credentials"]["usernames"][username]
 user_role = current_user.get("role", "user")
@@ -120,13 +133,9 @@ st.sidebar.markdown("---")
 st.sidebar.title("🏭 工厂工作区")
 
 if user_role == "admin" or allowed_factories == "ALL":
-  selected_factory = st.sidebar.selectbox(
-      "选择目标工厂", ALL_FACTORIES, key="factory_select_main_admin"
-  )
+  selected_factory = st.sidebar.selectbox("选择目标工厂", ALL_FACTORIES, key="factory_select_main_admin")
 else:
-  selected_factory = st.sidebar.selectbox(
-      "选择当前工厂", allowed_factories, key="factory_select_main_user"
-  )
+  selected_factory = st.sidebar.selectbox("选择当前工厂", allowed_factories, key="factory_select_main_user")
 
 st.sidebar.success(f"已连接工作区：\n**{selected_factory}**")
 st.sidebar.markdown("---")
@@ -166,19 +175,17 @@ except Exception:
     shutil.copytree(factory_vault, standard_vault, dirs_exist_ok=True)
 
 # ============================================================
-# 4. 安全运行主仪表盘脚本
+# 4. 安全防御：拦截重复的 set_page_config，并以沙箱隔离方式运行主脚本
 # ============================================================
 original_set_page_config = st.set_page_config
-
 
 def safe_set_page_config(*args, **kwargs):
   kwargs["layout"] = "wide"
   kwargs["initial_sidebar_state"] = "expanded"
   try:
-    original_set_page_config(*args, **kwargs)
+      original_set_page_config(*args, **kwargs)
   except Exception:
-    pass
-
+      pass
 
 st.set_page_config = safe_set_page_config
 

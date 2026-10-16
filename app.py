@@ -10,7 +10,7 @@ import streamlit_authenticator as stauth
 import r2_storage
 
 # ============================================================
-#  页面外观与缓存清理配置（彻底清除浏览器残留的侧边栏收起记忆）
+#  页面外观与【强力缓存绞杀】配置
 # ============================================================
 st.set_page_config(
     page_title="设备运行数据分析系统", 
@@ -27,18 +27,29 @@ st.markdown(
     </style>
 
     <script>
-    // 强行破解并重置浏览器的侧边栏折叠缓存
-    try {
-        // 遍历并修改所有可能记录侧边栏状态的本地缓存
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key && (key.toLowerCase().includes('sidebar') || key.toLowerCase().includes('nav'))) {
-                localStorage.setItem(key, '"expanded"');
+    // 【终极缓存绞杀脚本】：在 Streamlit 前端读取缓存前，强行干掉并重置侧边栏折叠记忆
+    (function() {
+        try {
+            // 1. 精准遍历并清除所有包含 sidebar / nav / collapse 的本地缓存
+            const keysToRemove = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && (key.toLowerCase().includes('sidebar') || key.toLowerCase().includes('collapse') || key.toLowerCase().includes('nav'))) {
+                    keysToRemove.push(key);
+                }
             }
+            keysToRemove.forEach(k => localStorage.removeItem(k));
+
+            // 2. 强行将主流的 Streamlit 侧边栏状态键设为展开
+            localStorage.setItem('stSidebarState', 'expanded');
+            localStorage.setItem('sidebarState', 'expanded');
+            
+            // 3. 如果有 sessionStorage 也一并清理
+            sessionStorage.clear();
+        } catch (e) {
+            console.log("Cache clear error: ", e);
         }
-        // 直接指定 Streamlit 常规的侧边栏状态键为展开
-        localStorage.setItem('stSidebarState', '"expanded"');
-    } catch (e) {}
+    })();
     </script>
     """,
     unsafe_allow_html=True,

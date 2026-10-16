@@ -73,8 +73,9 @@ authenticator = stauth.Authenticate(
     auto_hash=False,
 )
 
-name, authentication_status, username = authenticator.login('main')(
-    "请登录设备运行数据分析系统", location="main"
+# 已修复：修正了 authenticate.login 的调用方式
+name, authentication_status, username = authenticator.login(
+    "请登录设备运行数据分析系统", "main"
 )
 
 if authentication_status == False:

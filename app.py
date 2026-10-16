@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据分析系统 - 工厂安全隔离路由网关入口"""
+"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（全功能完美版）"""
 
 import inspect
 import os
@@ -27,7 +27,7 @@ st.markdown(
     div[data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
     footer { visibility: hidden !important; }
 
-    /* 通用：主内容区左右留白压到最小（手机、电脑都适用） */
+    /* 通用：主内容区左右留白压到最小 */
     .main .block-container,
     [data-testid="stMainBlockContainer"],
     div.block-container {
@@ -43,8 +43,7 @@ st.markdown(
         padding-right: 0 !important;
     }
 
-    /* 仅电脑端（宽度>768px）：侧边栏固定显示在左侧，主内容让出 335px。
-       手机端不强制，使用 Streamlit 自带布局，登录框才能正常显示 */
+    /* 电脑端（宽度>768px）：侧边栏固定显示在左侧 */
     @media (min-width: 769px) {
         section[data-testid="stSidebar"] {
             display: block !important;
@@ -61,9 +60,30 @@ st.markdown(
         .main .block-container,
         [data-testid="stMainBlockContainer"],
         div.block-container {
-            padding-left: 335px !important;  /* 侧边栏 320px + 15px 间隙 */
+            padding-left: 335px !important; /* 侧边栏 320px + 15px 间隙 */
         }
     }
+
+    /* 手机端/窄屏适配（宽度<=768px）：侧边栏作为独立抽屉浮层，带背景色防重叠 */
+    @media (max-width: 768px) {
+        body section[data-testid="stSidebar"] {
+            display: block !important;
+            visibility: visible !important;
+            transform: none !important;
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 82vw !important;
+            max-width: 300px !important;
+            min-width: 0 !important;
+            height: 100vh !important;
+            z-index: 999999 !important;
+            background-color: var(--secondary-background-color, #f8f9fa) !important;
+            box-shadow: 8px 0 24px rgba(0, 0, 0, 0.3) !important;
+        }
+        [data-testid="stSidebarCollapseButton"] { display: none !important; }
+    }
+
     /* 图片撑满可用宽度 */
     [data-testid="stImage"], [data-testid="stImage"] img {
         width: 100% !important;
@@ -154,7 +174,7 @@ elif (
   st.stop()
 
 # ============================================================
-# 3. 模块化调用侧边栏管理组件
+# 3. 模块化调用侧边栏管理组件与显隐状态控制
 # ============================================================
 current_user = st.session_state["user_db"]["credentials"]["usernames"][
     username
@@ -162,12 +182,7 @@ current_user = st.session_state["user_db"]["credentials"]["usernames"][
 user_role = current_user.get("role", "user")
 allowed_factories = current_user.get("allowed_factories", [])
 
-# ------------------------------------------------------------
-# 侧边栏显示 / 隐藏开关（隐藏后整屏用于操作与看图）
-# 说明：侧边栏控件始终渲染（保证工厂选择状态不丢失），仅用 CSS 隐藏
-# ------------------------------------------------------------
 if "sidebar_visible" not in st.session_state:
-  # 手机端登录后默认收起管理栏（避免整屏被侧边栏盖住），电脑端默认显示
   try:
     _ua = st.context.headers.get("User-Agent", "")
   except Exception:
@@ -181,7 +196,6 @@ def _set_sidebar_visible(flag):
 
 
 if st.session_state["sidebar_visible"]:
-  # 手机端：管理栏作为覆盖层全宽显示，里面的“隐藏管理栏”按钮负责关闭
   st.markdown(
       """
       <style>
@@ -193,11 +207,13 @@ if st.session_state["sidebar_visible"]:
               position: fixed !important;
               top: 0 !important;
               left: 0 !important;
-              width: 88vw !important;
+              width: 82vw !important;
+              max-width: 300px !important;
               min-width: 0 !important;
               height: 100vh !important;
               z-index: 999999 !important;
-              box-shadow: 4px 0 16px rgba(0,0,0,0.25);
+              background-color: var(--secondary-background-color, #f8f9fa) !important;
+              box-shadow: 8px 0 24px rgba(0, 0, 0, 0.3) !important;
           }
           [data-testid="stSidebarCollapseButton"] { display: none !important; }
       }
@@ -224,7 +240,6 @@ else:
           padding-right: 0.5rem !important;
           padding-top: 3rem !important;
       }
-      /* “显示”按钮悬浮在左上角，不占用页面布局 */
       .st-key-btn_show_sidebar {
           position: fixed !important;
           top: 0.5rem !important;

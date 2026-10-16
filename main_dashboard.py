@@ -929,17 +929,25 @@ if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
                     combined_lines = lines1 + lines2
                     combined_labels = labels1 + labels2
 
-                    ax1.legend(
+                    # 图例：左列为各时段"负荷"，右列为对应时段"压差"，同一时段在同一行
+                    legend_rows = (len(combined_labels) + 1) // 2
+                    legend_h_in = legend_rows * 0.24 + 0.3      # 图例所需高度（英寸）
+                    base_h_in = 8.0                             # 图表主体（含坐标轴标签）高度
+                    fig_h_in = base_h_in + legend_h_in
+                    fig.set_size_inches(16, fig_h_in)
+
+                    # 先给图例预留底部空间，再让坐标轴/刻度/“运行时间段”在剩余区域内排版，
+                    # 图例作为整张图的独立图例固定放在最底部，不会再遮挡“运行时间段”
+                    fig.tight_layout(rect=[0, legend_h_in / fig_h_in, 1, 1])
+                    fig.legend(
                         combined_lines,
                         combined_labels,
-                        loc="upper center",
-                        bbox_to_anchor=(0.5, -0.18),
-                        ncol=1,
-                        fontsize=10,
+                        loc="lower center",
+                        bbox_to_anchor=(0.5, 0.1 / fig_h_in),
+                        ncol=2,
+                        fontsize=9.5,
                         frameon=True,
                     )
-
-                    fig.tight_layout()
 
                     if threshold is not None:
                         chart_title_threshold = f"≥ {int(threshold)}"

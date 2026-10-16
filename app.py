@@ -167,7 +167,13 @@ allowed_factories = current_user.get("allowed_factories", [])
 # 说明：侧边栏控件始终渲染（保证工厂选择状态不丢失），仅用 CSS 隐藏
 # ------------------------------------------------------------
 if "sidebar_visible" not in st.session_state:
-  st.session_state["sidebar_visible"] = True
+  # 手机端登录后默认收起管理栏（避免整屏被侧边栏盖住），电脑端默认显示
+  try:
+    _ua = st.context.headers.get("User-Agent", "")
+  except Exception:
+    _ua = ""
+  _is_mobile = any(k in _ua for k in ("Mobile", "Android", "iPhone", "iPad"))
+  st.session_state["sidebar_visible"] = not _is_mobile
 
 
 def _set_sidebar_visible(flag):
@@ -175,6 +181,30 @@ def _set_sidebar_visible(flag):
 
 
 if st.session_state["sidebar_visible"]:
+  # 手机端：管理栏作为覆盖层全宽显示，里面的“隐藏管理栏”按钮负责关闭
+  st.markdown(
+      """
+      <style>
+      @media (max-width: 768px) {
+          body section[data-testid="stSidebar"] {
+              display: block !important;
+              visibility: visible !important;
+              transform: none !important;
+              position: fixed !important;
+              top: 0 !important;
+              left: 0 !important;
+              width: 88vw !important;
+              min-width: 0 !important;
+              height: 100vh !important;
+              z-index: 999999 !important;
+              box-shadow: 4px 0 16px rgba(0,0,0,0.25);
+          }
+          [data-testid="stSidebarCollapseButton"] { display: none !important; }
+      }
+      </style>
+      """,
+      unsafe_allow_html=True,
+  )
   st.sidebar.button(
       "◀ 隐藏管理栏",
       key="btn_hide_sidebar",

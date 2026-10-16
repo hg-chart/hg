@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（含回收站与二次确认弹窗修复版）"""
+"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（支持工厂增删、回收站、用户管理与密码重置）"""
 
 import inspect
 import os
@@ -53,7 +53,7 @@ st.markdown(
 )
 
 # ============================================================
-# 1. 初始化工厂列表与工厂回收站列表
+# 1. 初始化工厂列表与用户凭据 Session State
 # ============================================================
 if "all_factories" not in st.session_state:
   st.session_state["all_factories"] = [
@@ -66,38 +66,39 @@ if "all_factories" not in st.session_state:
 if "factory_trash" not in st.session_state:
   st.session_state["factory_trash"] = []
 
-# ============================================================
-# 2. 用户凭据与认证配置
-# ============================================================
-USER_CREDENTIALS = {
-    "credentials": {
-        "usernames": {
-            "admin": {
-                "name": "超级管理员",
-                "password": "123456",
-                "role": "admin",
-                "allowed_factories": "ALL",
-            },
-            "shanxi_user": {
-                "name": "山西红光厂长",
-                "password": "123456",
-                "role": "user",
-                "allowed_factories": ["shanxihg"],
-            },
-        }
-    },
-    "cookie": {
-        "expiry_days": 30,
-        "key": "factory_gateway_secure_key",
-        "name": "factory_gateway_cookie",
-    },
-}
+if "user_db" not in st.session_state:
+  st.session_state["user_db"] = {
+      "credentials": {
+          "usernames": {
+              "admin": {
+                  "name": "超级管理员",
+                  "password": "123456",
+                  "role": "admin",
+                  "allowed_factories": "ALL",
+              },
+              "shanxi_user": {
+                  "name": "山西红光厂长",
+                  "password": "123456",
+                  "role": "user",
+                  "allowed_factories": ["shanxihg"],
+              },
+          }
+      },
+      "cookie": {
+          "expiry_days": 30,
+          "key": "factory_gateway_secure_key",
+          "name": "factory_gateway_cookie",
+      },
+  }
 
+# ============================================================
+# 2. 动态创建认证器
+# ============================================================
 authenticator = stauth.Authenticate(
-    USER_CREDENTIALS["credentials"],
-    USER_CREDENTIALS["cookie"]["name"],
-    USER_CREDENTIALS["cookie"]["key"],
-    USER_CREDENTIALS["cookie"]["expiry_days"],
+    st.session_state["user_db"]["credentials"],
+    st.session_state["user_db"]["cookie"]["name"],
+    st.session_state["user_db"]["cookie"]["key"],
+    st.session_state["user_db"]["cookie"]["expiry_days"],
     auto_hash=True,
 )
 
@@ -128,10 +129,12 @@ elif authentication_status is None:
   st.stop()
 elif (
     authentication_status is not True
-    or username not in USER_CREDENTIALS["credentials"]["usernames"]
+    or username
+    not in st.session_state["user_db"]["credentials"]["usernames"]
 ):
   st.error("登录状态异常，请刷新页面后重新登录。")
   st.stop()
+
 
 # ============================================================
 # 辅助函数：高容错 R2 云端数据彻底删除逻辑
@@ -141,13 +144,11 @@ def purge_factory_r2_data(target_factory):
   try:
     r2_client = r2_storage._get_r2_client()
     bucket_name = getattr(r2_storage, "R2_BUCKET_NAME", None)
-    
+
     if r2_client is not None and bucket_name:
       target_prefix = f"device-monitor/{target_factory}/"
       paginator = r2_client.get_paginator("list_objects_v2")
-      pages = paginator.paginate(
-          Bucket=bucket_name, Prefix=target_prefix
-      )
+      pages = paginator.paginate(Bucket=bucket_name, Prefix=target_prefix)
 
       objects_to_delete = []
       for page in pages:
@@ -162,7 +163,6 @@ def purge_factory_r2_data(target_factory):
               Delete={"Objects": objects_to_delete[i : i + 1000]},
           )
   except Exception as e:
-    # 兼容处理，防止阻断本地销毁流程
     print(f"清理 R2 云端数据提示: {e}")
 
 
@@ -187,7 +187,14 @@ def confirm_permanent_delete_dialog(target_factory):
       st.rerun()
 
   with col2:
-    if st.button("🔥 确认彻底删除", type="primary", use_container_width=True, key="dlg_btn_confirm"):
+    if (
+        st.button(
+            "🔥 确认彻底删除",
+            type="primary",
+            use_container_width=True,
+            key="dlg_btn_confirm",
+        )
+    ):
       if typed_name.strip() == target_factory:
         # 1. 彻底清除 R2 云端数据
         purge_factory_r2_data(target_factory)
@@ -211,29 +218,30 @@ def confirm_permanent_delete_dialog(target_factory):
 
 
 # ============================================================
-# 4. 侧边栏：会话信息、修改密码、工厂隔离与安全回收站
+# 4. 侧边栏：会话信息、修改密码、工厂隔离与全能管理员工具
 # ============================================================
-current_user = USER_CREDENTIALS["credentials"]["usernames"][username]
+current_user = st.session_state["user_db"]["credentials"]["usernames"][
+    username
+]
 user_role = current_user.get("role", "user")
 allowed_factories = current_user.get("allowed_factories", [])
 
 st.sidebar.title("🔐 会话信息")
-st.sidebar.write(f"当前用户：**{name}** (`{user_role}`)")
+st.sidebar.write(f"当前用户：**{name}** (`{username}`)")
 
-with st.sidebar.expander("🔑 修改密码"):
-  try:
-    if authenticator.reset_password(username, "修改密码"):
-      st.success("✅ 密码修改成功！")
-  except Exception:
-    new_password = st.text_input("新密码", type="password", key="reset_pwd_input")
-    if st.button("确认重置", key="btn_reset_pwd_sub"):
-      if new_password:
-        USER_CREDENTIALS["credentials"]["usernames"][username]["password"] = (
-            new_password
-        )
-        st.success("✅ 密码重置成功，请妥善保管！")
-      else:
-        st.warning("密码不能为空")
+# 修改当前登录用户密码[cite: 7]
+with st.sidebar.expander("🔑 修改我的密码"):
+  new_self_pwd = st.text_input(
+      "新密码", type="password", key="reset_self_pwd_input"
+  )
+  if st.button("确认重置", key="btn_reset_self_pwd"):
+    if new_self_pwd:
+      st.session_state["user_db"]["credentials"]["usernames"][username][
+          "password"
+      ] = new_self_pwd
+      st.success("✅ 个人密码重置成功，下次登录生效！")
+    else:
+      st.warning("密码不能为空")
 
 authenticator.logout("退出登录", "sidebar")
 st.sidebar.markdown("---")
@@ -273,11 +281,91 @@ else:
 st.session_state["selected_factory_val"] = selected_factory
 st.sidebar.success(f"已连接工作区：\n**{selected_factory}**")
 
-# 【管理员高级工具：工厂管理与安全回收站】
+# 【超级管理员工具箱：工厂管理 + 用户权限与密码统一管理】
 if user_role == "admin":
   st.sidebar.markdown("---")
+
+  # 1. 用户与密码管理板块
+  with st.sidebar.expander("👥 用户账号与密码管理"):
+    st.markdown("#### 🔑 修改任意用户密码")
+    all_users = list(
+        st.session_state["user_db"]["credentials"]["usernames"].keys()
+    )
+    target_user_to_edit = st.selectbox(
+        "选择目标用户", all_users, key="select_user_to_edit_pwd"
+    )
+    target_new_pwd = st.text_input(
+        f"设置 [{target_user_to_edit}] 的新密码",
+        type="password",
+        key="input_target_new_pwd",
+    )
+    if st.button("确认重置该用户密码", key="btn_confirm_user_pwd_reset"):
+      if target_new_pwd:
+        st.session_state["user_db"]["credentials"]["usernames"][
+            target_user_to_edit
+        ]["password"] = target_new_pwd
+        st.success(f"已成功重置用户【{target_user_to_edit}】的密码！")
+      else:
+        st.error("密码不能为空！")
+
+    st.markdown("---")
+    st.markdown("#### ➕ 创建新账号")
+    new_uname = st.text_input(
+        "登录用户名 (英文/数字)", placeholder="例: taiyuan_user", key="new_u_name"
+    )
+    new_disp_name = st.text_input(
+        "人员姓名/显示名", placeholder="例: 太原厂长", key="new_u_disp"
+    )
+    new_u_pwd = st.text_input(
+        "初始密码", type="password", key="new_u_pwd_input"
+    )
+
+    # 关联授权工厂
+    assigned_facs = st.multiselect(
+        "允许访问的工厂",
+        st.session_state["all_factories"],
+        key="select_user_allowed_facs",
+    )
+
+    if st.button("创建用户账号", key="btn_create_new_user", use_container_width=True):
+      new_uname = new_uname.strip()
+      if not new_uname or not new_u_pwd:
+        st.error("用户名和密码必填！")
+      elif (
+          new_uname
+          in st.session_state["user_db"]["credentials"]["usernames"]
+      ):
+        st.error("该用户名已存在！")
+      else:
+        st.session_state["user_db"]["credentials"]["usernames"][new_uname] = {
+            "name": new_disp_name if new_disp_name else new_uname,
+            "password": new_u_pwd,
+            "role": "user",
+            "allowed_factories": assigned_facs
+            if assigned_facs
+            else st.session_state["all_factories"],
+        }
+        st.success(f"用户【{new_uname}】创建成功！")
+        st.rerun()
+
+    st.markdown("---")
+    st.markdown("#### 🗑️ 删除用户账号")
+    user_to_del = st.selectbox(
+        "选择要删除的账号",
+        [u for u in all_users if u != "admin"],
+        key="select_u_del",
+    )
+    if st.button("确认删除该账号", key="btn_del_user_acc", use_container_width=True):
+      if user_to_del:
+        del st.session_state["user_db"]["credentials"]["usernames"][
+            user_to_del
+        ]
+        st.success(f"账号【{user_to_del}】已成功删除！")
+        st.rerun()
+
+  # 2. 工厂与回收站管理板块
   with st.sidebar.expander("⚙️ 工厂管理与回收站"):
-    # 1. 增加工厂
+    # 增加工厂
     st.markdown("#### ➕ 增加新工厂")
     new_fac_name = st.text_input(
         "新工厂名称", placeholder="例如：华南分厂", key="add_fac_input"
@@ -297,7 +385,7 @@ if user_role == "admin":
         st.rerun()
 
     st.markdown("---")
-    # 2. 软删除：移入回收站（R2 数据保持原封不动）
+    # 软删除：移入回收站
     st.markdown("#### 🗑️ 软删除（移入回收站）")
     st.caption("提示：移入回收站时不会删除 R2 云端数据，可在下方还原。")
     del_fac_name = st.selectbox(
@@ -317,7 +405,7 @@ if user_role == "admin":
         st.rerun()
 
     st.markdown("---")
-    # 3. 工厂回收站管理（还原 / 彻底删除）
+    # 工厂回收站管理
     st.markdown("#### ♻️ 工厂回收站")
     if not st.session_state["factory_trash"]:
       st.info("回收站为空")
@@ -330,15 +418,18 @@ if user_role == "admin":
 
       c_res, c_purge = st.columns(2)
       with c_res:
-        if st.button("↩️ 还原工厂", key="btn_restore_fac", use_container_width=True):
+        if st.button(
+            "↩️ 还原工厂", key="btn_restore_fac", use_container_width=True
+        ):
           st.session_state["factory_trash"].remove(trash_fac_selected)
           st.session_state["all_factories"].append(trash_fac_selected)
           st.success(f"工厂【{trash_fac_selected}】已恢复！")
           st.rerun()
 
       with c_purge:
-        if st.button("🔥 彻底删除", key="btn_trigger_dialog", use_container_width=True):
-          # 触发二次确认交互弹窗
+        if st.button(
+            "🔥 彻底删除", key="btn_trigger_dialog", use_container_width=True
+        ):
           confirm_permanent_delete_dialog(trash_fac_selected)
 
 st.sidebar.markdown("---")

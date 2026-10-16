@@ -4,6 +4,8 @@
 import inspect
 import os
 import shutil
+import sys
+from unittest.mock import MagicMock
 import streamlit as st
 import streamlit_authenticator as stauth
 
@@ -15,6 +17,7 @@ import r2_storage
 # ============================================================
 st.set_page_config(page_title="设备运行数据分析系统", layout="wide")
 
+# 隐藏右上角工具栏与页脚
 st.markdown(
     """
     <style>
@@ -31,7 +34,7 @@ st.markdown(
 )
 
 # ============================================================
-# 1. 多工厂与权限字典配置
+# 1. 多工厂与权限字典配置（直接使用明文密码，开启自动哈希）
 # ============================================================
 ALL_FACTORIES = ["shanxihg", "太原分厂", "华东一厂", "华东二厂"]
 
@@ -40,13 +43,13 @@ USER_CREDENTIALS = {
         "usernames": {
             "admin": {
                 "name": "超级管理员",
-                "password": "123456",
+                "password": "123456",  # 启用 auto_hash=True 后，系统会自动加密
                 "role": "admin",
                 "allowed_factories": "ALL",
             },
             "shanxi_user": {
                 "name": "山西红光厂长",
-                "password": "123456",
+                "password": "123456",  # 启用 auto_hash=True 后，系统会自动加密
                 "role": "user",
                 "allowed_factories": ["shanxihg"],
             },
@@ -59,6 +62,7 @@ USER_CREDENTIALS = {
     },
 }
 
+# 关键：开启 auto_hash=True，让库自动处理明文密码的加密校验
 authenticator = stauth.Authenticate(
     USER_CREDENTIALS["credentials"],
     USER_CREDENTIALS["cookie"]["name"],
@@ -122,12 +126,11 @@ st.sidebar.success(f"已连接工作区：\n**{selected_factory}**")
 st.sidebar.markdown("---")
 
 # ============================================================
-# 4. 目录挂载魔法：无损桥接 R2 与原版 main_dashboard.py
+# 4. 动态设置 R2 路径并同步，同时无损桥接本地目录
 # ============================================================
-# 动态设定 R2 前缀
-r2_storage.BASE_PREFIX = f"device-monitor/{selected_factory}/"
+r2_prefix = f"device-monitor/{selected_factory}/"
+r2_storage.BASE_PREFIX = r2_prefix
 
-# 定义该工厂专属的本地物理仓库目录
 factory_vault = f"uploaded_vault_{selected_factory}"
 factory_trash = f"file_trash_{selected_factory}"
 factory_chart = f"chart_history_{selected_factory}"
@@ -136,27 +139,23 @@ os.makedirs(factory_vault, exist_ok=True)
 os.makedirs(factory_trash, exist_ok=True)
 os.makedirs(factory_chart, exist_ok=True)
 
-# 触发一次 R2 同步，把当前工厂云端文件拉到对应的工厂专属目录中
 if r2_storage._get_r2_client() is not None:
   sync_key = f"_r2_synced_{selected_factory}"
   if not st.session_state.get(sync_key, False):
-    with st.spinner(f"正在从 Cloudflare R2 同步 [{selected_factory}] 的历史数据..."):
+    with st.spinner(f"正在加载 [{selected_factory}] 的云端数据..."):
       r2_storage.sync_local_storage_with_r2(
           factory_vault, factory_trash, factory_chart
       )
     st.session_state[sync_key] = True
 
-# 关键魔法：将该工厂的专属目录“镜像映射”给原版 main_dashboard.py 默认读取的文件夹名
+# 将当前工厂的文件夹镜像映射给原版 main_dashboard.py 默认读取的文件夹名
 standard_vault = "uploaded_vault"
-
-# 安全清理旧的映射或文件夹（已修复 rmtree 不能删符号链接的报错）
 if os.path.lexists(standard_vault):
   if os.path.islink(standard_vault) or os.path.isfile(standard_vault):
     os.unlink(standard_vault)
   else:
     shutil.rmtree(standard_vault)
 
-# 建立软链接，若失败则退化为拷贝目录
 try:
   os.symlink(factory_vault, standard_vault, target_is_directory=True)
 except Exception:
@@ -164,6 +163,20 @@ except Exception:
     shutil.copytree(factory_vault, standard_vault, dirs_exist_ok=True)
 
 # ============================================================
-# 5. 直接唤醒并运行你原封未动的业务主脚本
+# 5. 安全防御：拦截重复的 set_page_config，随后加载原版主脚本
 # ============================================================
-import main_dashboard
+# 原版 main_dashboard.py 带有自己的 st.set_page_config，
+# 通过此处的代理拦截，防止触发 Streamlit 重复配置报错（白屏）。
+original_set_page_config = st.set_page_config
+
+
+def safe_set_page_config(*args, **kwargs):
+  pass  # 忽略后续重复调用，保持页面稳定
+
+
+st.set_page_config = safe_set_page_config
+
+try:
+  import main_dashboard
+finally:
+  st.set_page_config = original_set_page_config

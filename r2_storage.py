@@ -79,8 +79,10 @@ def r2_upload_file(local_path, key=None):
   if client is None:
     return False
   try:
-    key = _r2_key(key or local_path)
-    client.upload_file(str(local_path), _r2_bucket(), key)
+    # 确保保存到 R2 时带上正确的工厂前缀
+    raw_key = key or local_path
+    full_key = _r2_key(raw_key)
+    client.upload_file(str(local_path), _r2_bucket(), full_key)
     return True
   except Exception as exc:
     logging.exception("上传到 Cloudflare R2 失败：%s", exc)
@@ -113,7 +115,15 @@ def r2_list_keys():
       if token:
         kwargs["ContinuationToken"] = token
       response = client.list_objects_v2(**kwargs)
-      keys.extend(item["Key"] for item in response.get("Contents", []))
+      
+      for item in response.get("Contents", []):
+        k = item["Key"]
+        # 【核心修正】：自动剥离当前工厂前缀，让返回的 Key 完美以 "chart_history/" 或文件名开头
+        # 这样原版 main_dashboard.py 解析目录层级时就不会发生错位！
+        if k.startswith(current_prefix):
+          k = k[len(current_prefix):]
+        keys.append(k)
+
       if not response.get("IsTruncated"):
         break
       token = response.get("NextContinuationToken")
@@ -124,35 +134,55 @@ def r2_list_keys():
 
 
 def sync_local_storage_with_r2(vault_dir, file_trash_dir, chart_history_dir):
-  """终极健壮版同步：直接将该前缀下的所有有效数据文件下载到本地 vault_dir"""
+  """启动时同步：精准从当前工厂的云端目录拉取文件到本地"""
   client = _get_r2_client()
   if client is None:
     return False
 
-  remote_keys = r2_list_keys()
-  if remote_keys is None:
+  # 直接获取原始带前缀的 keys 用于下载文件
+  try:
+    raw_keys = []
+    token = None
+    current_prefix = _get_active_prefix()
+    while True:
+      kwargs = {"Bucket": _r2_bucket(), "Prefix": current_prefix}
+      if token:
+        kwargs["ContinuationToken"] = token
+      response = client.list_objects_v2(**kwargs)
+      raw_keys.extend(item["Key"] for item in response.get("Contents", []))
+      if not response.get("IsTruncated"):
+        break
+      token = response.get("NextContinuationToken")
+  except Exception:
     return False
 
   os.makedirs(vault_dir, exist_ok=True)
+  os.makedirs(file_trash_dir, exist_ok=True)
+  os.makedirs(chart_history_dir, exist_ok=True)
 
-  for remote_key in remote_keys:
-    # 过滤掉文件夹本身和回收站、图表历史
-    if remote_key.endswith("/") or "trash" in remote_key or "chart_history" in remote_key:
+  for remote_key in raw_keys:
+    if remote_key.endswith("/"):
+      continue
+    
+    # 提取相对于当前工厂前缀的路径
+    rel = remote_key[len(current_prefix):]
+    if not rel:
       continue
 
-    # 提取纯文件名（例如 device-monitor/shanxihg/abc.csv -> abc.csv）
-    file_name = remote_key.split("/")[-1]
-    if not file_name or not file_name.lower().endswith((".csv", ".xlsx", ".xls", ".json")):
-      continue
+    # 根据路径分发下载到对应的本地文件夹
+    if rel.startswith("chart_history/"):
+      local_target = Path(rel) # 包含 chart_history/方案名/文件名
+    elif "trash" in rel:
+      local_target = Path(file_trash_dir) / rel.split("/")[-1]
+    else:
+      local_target = Path(vault_dir) / rel.split("/")[-1]
 
-    local_target = Path(vault_dir) / file_name
-
-    # 如果本地没有或者大小为0，则从云端拉取
-    try:
-      response = client.get_object(Bucket=_r2_bucket(), Key=remote_key)
-      file_bytes = response["Body"].read()
-      local_target.write_bytes(file_bytes)
-    except Exception as exc:
-      logging.exception("下载 R2 文件出错: %s", exc)
+    if not local_target.exists():
+      try:
+        local_target.parent.mkdir(parents=True, exist_ok=True)
+        response = client.get_object(Bucket=_r2_bucket(), Key=remote_key)
+        local_target.write_bytes(response["Body"].read())
+      except Exception:
+        pass
 
   return True

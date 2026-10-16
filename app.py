@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（支持工厂增删与密码修改）"""
+"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（含工厂安全回收站与二次确认弹窗）"""
 
 import inspect
 import os
@@ -53,7 +53,7 @@ st.markdown(
 )
 
 # ============================================================
-# 1. 初始化工厂动态列表（支持动态增删）
+# 1. 初始化工厂列表与工厂回收站列表
 # ============================================================
 if "all_factories" not in st.session_state:
   st.session_state["all_factories"] = [
@@ -63,6 +63,9 @@ if "all_factories" not in st.session_state:
       "华东二厂",
   ]
 
+if "factory_trash" not in st.session_state:
+  st.session_state["factory_trash"] = []
+
 # ============================================================
 # 2. 用户凭据与认证配置
 # ============================================================
@@ -71,7 +74,7 @@ USER_CREDENTIALS = {
         "usernames": {
             "admin": {
                 "name": "超级管理员",
-                "password": "123456",  # 默认初始密码
+                "password": "123456",
                 "role": "admin",
                 "allowed_factories": "ALL",
             },
@@ -131,7 +134,82 @@ elif (
   st.stop()
 
 # ============================================================
-# 4. 侧边栏：会话信息、修改密码、工厂隔离与增删管理
+# 辅助函数：R2 云端数据彻底删除逻辑
+# ============================================================
+def purge_factory_r2_data(target_factory):
+  """在回收站彻底删除工厂时，清除 Cloudflare R2 上该工厂前缀的所有数据"""
+  r2_client = r2_storage._get_r2_client()
+  if r2_client is not None and r2_storage.R2_BUCKET_NAME:
+    try:
+      target_prefix = f"device-monitor/{target_factory}/"
+      paginator = r2_client.get_paginator("list_objects_v2")
+      pages = paginator.paginate(
+          Bucket=r2_storage.R2_BUCKET_NAME, Prefix=target_prefix
+      )
+
+      objects_to_delete = []
+      for page in pages:
+        if "Contents" in page:
+          for obj in page["Contents"]:
+            objects_to_delete.append({"Key": obj["Key"]})
+
+      if objects_to_delete:
+        # 分批彻底清除文件
+        for i in range(0, len(objects_to_delete), 1000):
+          r2_client.delete_objects(
+              Bucket=r2_storage.R2_BUCKET_NAME,
+              Delete={"Objects": objects_to_delete[i : i + 1000]},
+          )
+    except Exception as e:
+      st.error(f"清理 R2 云端数据时发生错误: {e}")
+
+
+# ============================================================
+# 定义弹窗组件：工厂彻底删除二次验证对话框
+# ============================================================
+@st.dialog("⚠️ 彻底删除工厂高危操作确认")
+def confirm_permanent_delete_dialog(target_factory):
+  st.warning(
+      f"您正在彻底删除工厂：**【{target_factory}】**！\n\n此操作将**不可逆地永久删除**该工厂在"
+      " Cloudflare R2 云端及本地的所有隔离数据。"
+  )
+  st.write("为了防止误操作，请输入要删除的工厂完整名称进行确认：")
+
+  typed_name = st.text_input(
+      f"请精准输入：{target_factory}", key="dialog_confirm_input"
+  )
+
+  col1, col2 = st.columns(2)
+  with col1:
+    if st.button("❌ 取消操作", use_container_width=True):
+      st.rerun()
+
+  with col2:
+    if st.button("🔥 确认彻底删除", type="primary", use_container_width=True):
+      if typed_name.strip() == target_factory:
+        # 1. 彻底清除 R2 云端数据
+        purge_factory_r2_data(target_factory)
+
+        # 2. 从回收站移除
+        if target_factory in st.session_state["factory_trash"]:
+          st.session_state["factory_trash"].remove(target_factory)
+
+        # 3. 清除本地缓存文件夹
+        for folder_suffix in ["uploaded_vault", "file_trash", "chart_history"]:
+          local_dir = f"{folder_suffix}_{target_factory}"
+          if os.path.exists(local_dir):
+            shutil.rmtree(local_dir, ignore_errors=True)
+
+        st.success(f"工厂【{target_factory}】及其 R2 云端数据已彻底永久销毁！")
+        st.rerun()
+      else:
+        st.error(
+            f"输入的工厂名称不匹配！要求输入：{target_factory}，实际输入：{typed_name}"
+        )
+
+
+# ============================================================
+# 4. 侧边栏：会话信息、修改密码、工厂隔离与安全回收站
 # ============================================================
 current_user = USER_CREDENTIALS["credentials"]["usernames"][username]
 user_role = current_user.get("role", "user")
@@ -140,13 +218,11 @@ allowed_factories = current_user.get("allowed_factories", [])
 st.sidebar.title("🔐 会话信息")
 st.sidebar.write(f"当前用户：**{name}** (`{user_role}`)")
 
-# 【功能二：修改密码】
 with st.sidebar.expander("🔑 修改密码"):
   try:
     if authenticator.reset_password(username, "修改密码"):
       st.success("✅ 密码修改成功！")
-  except Exception as e:
-    # 兼容低版本 authenticator 手动修改
+  except Exception:
     new_password = st.text_input("新密码", type="password", key="reset_pwd_input")
     if st.button("确认重置"):
       if new_password:
@@ -162,6 +238,15 @@ st.sidebar.markdown("---")
 
 st.sidebar.title("🏭 工厂工作区")
 
+# 如果当前选中的工厂刚好被移入回收站，自动重置选中项
+if st.session_state.get("selected_factory_val") not in st.session_state[
+    "all_factories"
+]:
+  if st.session_state["all_factories"]:
+    st.session_state["selected_factory_val"] = st.session_state[
+        "all_factories"
+    ][0]
+
 # 工厂选择下拉框
 if user_role == "admin" or allowed_factories == "ALL":
   selected_factory = st.sidebar.selectbox(
@@ -170,51 +255,89 @@ if user_role == "admin" or allowed_factories == "ALL":
       key="factory_select_main_admin",
   )
 else:
-  # 普通用户过滤允许的工厂列表
   user_fac_list = [
       f for f in st.session_state["all_factories"] if f in allowed_factories
   ]
   if not user_fac_list:
-    user_fac_list = allowed_factories
+    user_fac_list = (
+        allowed_factories
+        if isinstance(allowed_factories, list)
+        else [allowed_factories]
+    )
   selected_factory = st.sidebar.selectbox(
       "选择当前工厂", user_fac_list, key="factory_select_main_user"
   )
 
+st.session_state["selected_factory_val"] = selected_factory
 st.sidebar.success(f"已连接工作区：\n**{selected_factory}**")
 
-# 【功能一：管理员增加/删除工厂】
+# 【管理员高级工具：工厂管理与安全回收站】
 if user_role == "admin":
   st.sidebar.markdown("---")
-  with st.sidebar.expander("⚙️ 管理员工具：工厂管理"):
-    st.subheader("➕ 增加新工厂")
+  with st.sidebar.expander("⚙️ 工厂管理与回收站"):
+    # 1. 增加工厂
+    st.markdown("#### ➕ 增加新工厂")
     new_fac_name = st.text_input(
         "新工厂名称", placeholder="例如：华南分厂", key="add_fac_input"
     )
-    if st.button("确认添加工厂", key="btn_add_fac"):
+    if st.button("确认添加工厂", key="btn_add_fac", use_container_width=True):
       new_fac_name = new_fac_name.strip()
       if not new_fac_name:
         st.error("工厂名称不能为空！")
-      elif new_fac_name in st.session_state["all_factories"]:
-        st.warning("该工厂已存在！")
+      elif (
+          new_fac_name in st.session_state["all_factories"]
+          or new_fac_name in st.session_state["factory_trash"]
+      ):
+        st.warning("该工厂已存在或已在回收站中！")
       else:
         st.session_state["all_factories"].append(new_fac_name)
         st.success(f"已成功添加工厂：{new_fac_name}")
         st.rerun()
 
     st.markdown("---")
-    st.subheader("🗑️ 删除已有工厂")
+    # 2. 软删除：移入回收站（R2 数据保持原封不动）
+    st.markdown("#### 🗑️ 软删除（移入回收站）")
+    st.caption("提示：移入回收站时不会删除 R2 云端数据，可在下方还原。")
     del_fac_name = st.selectbox(
-        "选择要删除的工厂",
+        "选择移入回收站的工厂",
         st.session_state["all_factories"],
         key="del_fac_select",
     )
-    if st.button("确认删除工厂", key="btn_del_fac"):
+    if st.button(
+        "📥 移入回收站", key="btn_move_trash", use_container_width=True
+    ):
       if len(st.session_state["all_factories"]) <= 1:
-        st.error("至少需要保留一个工厂！")
+        st.error("至少需要保留一个活跃工厂！")
       else:
         st.session_state["all_factories"].remove(del_fac_name)
-        st.success(f"已成功删除工厂：{del_fac_name}")
+        st.session_state["factory_trash"].append(del_fac_name)
+        st.success(f"工厂【{del_fac_name}】已移入回收站（R2 云端数据完整保留）")
         st.rerun()
+
+    st.markdown("---")
+    # 3. 工厂回收站管理（还原 / 彻底删除）
+    st.markdown("#### ♻️ 工厂回收站")
+    if not st.session_state["factory_trash"]:
+      st.info("回收站为空")
+    else:
+      trash_fac_selected = st.selectbox(
+          "回收站中的工厂",
+          st.session_state["factory_trash"],
+          key="trash_fac_select",
+      )
+
+      c_res, c_purge = st.columns(2)
+      with c_res:
+        if st.button("↩️ 还原工厂", key="btn_restore_fac"):
+          st.session_state["factory_trash"].remove(trash_fac_selected)
+          st.session_state["all_factories"].append(trash_fac_selected)
+          st.success(f"工厂【{trash_fac_selected}】已恢复！")
+          st.rerun()
+
+      with c_purge:
+        if st.button("🔥 彻底删除", key="btn_trigger_dialog"):
+          # 触发二次确认交互弹窗
+          confirm_permanent_delete_dialog(trash_fac_selected)
 
 st.sidebar.markdown("---")
 

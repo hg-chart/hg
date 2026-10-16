@@ -1,21 +1,24 @@
 # -*- coding: utf-8 -*-
 """模块五：图表绘制与预览"""
 import io
+import os
+from datetime import datetime
 import matplotlib.pyplot as plt
 from matplotlib import ticker
 import pandas as pd
 import streamlit as st
+import r2_storage
 
 COLUMN_ALIASES = {
     "压差": "W3.FW.AHTE10CP201F",
     "负荷": "W3.UNIT1.10DEHDCSAI03",
 }
 
-def render_chart_generator(df_raw, time_col, load_col, pressure_col, threshold, threshold_valid):
-    """渲染生成趋势图的触发按钮及预览界面"""
+def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid):
+    """渲染生成趋势图的触发按钮及预览界面（支持负荷区间过滤）"""
     if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
-        if not threshold_valid:
-            st.error("请先把负荷下限阈值修改为有效数字。")
+        if not filter_valid:
+            st.error("请先修正负荷过滤条件的输入错误。")
         elif not st.session_state.get("intervals"):
             st.session_state.plotted_fig_bytes = None
             st.session_state.plotted_title = ""
@@ -52,8 +55,13 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, threshold, 
                     df = df.sort_values(actual_time_col).reset_index(drop=True)
                     df = df[df[actual_load_col] != 0].copy()
 
-                    if threshold is not None:
-                        df = df[df[actual_load_col] >= threshold].copy()
+                    # 区间或单边过滤逻辑
+                    if min_threshold is not None and max_threshold is not None:
+                        df = df[(df[actual_load_col] >= min_threshold) & (df[actual_load_col] <= max_threshold)].copy()
+                    elif min_threshold is not None:
+                        df = df[df[actual_load_col] >= min_threshold].copy()
+                    elif max_threshold is not None:
+                        df = df[df[actual_load_col] <= max_threshold].copy()
 
                     palette = [
                         ("#85B2FF", "#1E3F66"),
@@ -94,9 +102,12 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, threshold, 
                         else:
                             config_str = f"多频集速运行{run_value}s/停止{stop_value}s"
 
-                        if threshold is not None:
-                            threshold_int = int(threshold)
-                            time_prefix = f"负荷≥{threshold_int}，机组实际运行时间"
+                        if min_threshold is not None and max_threshold is not None:
+                            time_prefix = f"负荷 {min_threshold} ~ {max_threshold}，机组实际运行时间"
+                        elif min_threshold is not None:
+                            time_prefix = f"负荷≥{min_threshold}，机组实际运行时间"
+                        elif max_threshold is not None:
+                            time_prefix = f"负荷≤{max_threshold}，机组实际运行时间"
                         else:
                             time_prefix = "机组实际运行时间"
 
@@ -116,7 +127,7 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, threshold, 
                     st.info("🔍 各时段数据检索诊断：" + " | ".join(diagnostics))
 
                     if not plotted_periods:
-                        st.warning("指定时间段和负荷阈值下均未检索到有效数据。")
+                        st.warning("指定时间段和负荷过滤条件下均未检索到有效数据。")
                         st.session_state.plotted_fig_bytes = None
                         st.session_state.plotted_title = ""
                         st.session_state.plotted_periods_info = []
@@ -198,11 +209,16 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, threshold, 
                             frameon=True,
                         )
 
-                        if threshold is not None:
-                            chart_title_threshold = f"≥ {int(threshold)}"
+                        if min_threshold is not None and max_threshold is not None:
+                            chart_title_threshold = f"区间 [{min_threshold}, {max_threshold}]"
+                        elif min_threshold is not None:
+                            chart_title_threshold = f"≥ {min_threshold}"
+                        elif max_threshold is not None:
+                            chart_title_threshold = f"≤ {max_threshold}"
                         else:
                             chart_title_threshold = "全部"
-                        chart_title = f"机组负荷/压差对比趋势图（最低负荷 {chart_title_threshold}）"
+
+                        chart_title = f"机组负荷/压差对比趋势图（负荷条件：{chart_title_threshold}）"
                         plt.title(chart_title, fontsize=14, pad=20)
 
                         buf = io.BytesIO()
@@ -226,10 +242,15 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, threshold, 
         st.image(st.session_state.plotted_fig_bytes, use_container_width=True)
 
         with st.container(border=True):
-            if threshold is not None:
-                current_threshold_str = f"负荷≥{int(threshold)}"
+            if min_threshold is not None and max_threshold is not None:
+                current_threshold_str = f"负荷区间 [{min_threshold}, {max_threshold}]"
+            elif min_threshold is not None:
+                current_threshold_str = f"负荷≥{min_threshold}"
+            elif max_threshold is not None:
+                current_threshold_str = f"负荷≤{max_threshold}"
             else:
                 current_threshold_str = "全部负荷"
+
             st.markdown(f"📋 **各时段详细起止与配置说明（{current_threshold_str}）**", unsafe_allow_html=True)
             
             st.markdown(
@@ -275,7 +296,16 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, threshold, 
                         elif not scheme_name:
                             scheme_name = "未命名时间段方案"
                         
-                        load_tag_str = f"负荷_{int(threshold)}" if threshold is not None else "负荷_全部"
+                        # 生成兼容单值或区间的负荷标签
+                        if min_threshold is not None and max_threshold is not None:
+                            load_tag_str = f"负荷_{min_threshold}_{max_threshold}"
+                        elif min_threshold is not None:
+                            load_tag_str = f"负荷_{min_threshold}"
+                        elif max_threshold is not None:
+                            load_tag_str = f"负荷_上限_{max_threshold}"
+                        else:
+                            load_tag_str = "负荷_全部"
+
                         time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
                         chart_filename = f"{load_tag_str}_{time_str}.png"
                         

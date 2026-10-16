@@ -40,12 +40,25 @@ st.markdown(
         z-index: 999999 !important;
     }
 
-    .main .block-container {
+    /* 兼容新旧版 Streamlit 的主内容区选择器；右侧留白压到最小 */
+    .main .block-container,
+    [data-testid="stMainBlockContainer"],
+    div.block-container {
         max-width: 100% !important;
         width: 100% !important;
-        padding-left: 350px !important;
-        padding-right: 2rem !important;
+        padding-left: 335px !important;  /* 侧边栏 320px + 15px 间隙 */
+        padding-right: 0.5rem !important;
         padding-top: 1.5rem !important;
+        padding-bottom: 1rem !important;
+    }
+    [data-testid="stMain"],
+    [data-testid="stAppViewContainer"] {
+        padding-right: 0 !important;
+    }
+    /* 图片撑满可用宽度 */
+    [data-testid="stImage"], [data-testid="stImage"] img {
+        width: 100% !important;
+        max-width: 100% !important;
     }
     </style>
     """,

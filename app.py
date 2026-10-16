@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（全功能完美版）"""
+"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（支持用户数据持久化）"""
 
 import inspect
 import os
@@ -95,7 +95,7 @@ st.markdown(
 )
 
 # ============================================================
-# 1. 全局数据源初始化
+# 1. 全局数据源初始化（读取本地持久化 users_db.json）
 # ============================================================
 if "all_factories" not in st.session_state:
   st.session_state["all_factories"] = [
@@ -108,30 +108,9 @@ if "all_factories" not in st.session_state:
 if "factory_trash" not in st.session_state:
   st.session_state["factory_trash"] = []
 
+# 从 user_manager 加载持久化文件 users_db.json，不在代码中写死账号字典
 if "user_db" not in st.session_state:
-  st.session_state["user_db"] = {
-      "credentials": {
-          "usernames": {
-              "admin": {
-                  "name": "超级管理员",
-                  "password": "123456",
-                  "role": "admin",
-                  "allowed_factories": "ALL",
-              },
-              "shanxi_user": {
-                  "name": "山西红光厂长",
-                  "password": "123456",
-                  "role": "user",
-                  "allowed_factories": ["shanxihg"],
-              },
-          }
-      },
-      "cookie": {
-          "expiry_days": 30,
-          "key": "factory_gateway_secure_key",
-          "name": "factory_gateway_cookie",
-      },
-  }
+  st.session_state["user_db"] = user_manager.load_user_db()
 
 # ============================================================
 # 2. 用户登录认证

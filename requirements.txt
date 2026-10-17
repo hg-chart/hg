@@ -5,3 +5,4 @@ matplotlib
 openpyxl
 boto3
 streamlit-authenticator
+xlrd>=2.0.1

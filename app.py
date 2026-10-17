@@ -103,11 +103,9 @@ if "user_db" not in st.session_state:
 
 # 动态初始化工厂列表：优先尝试从 factory_manager 或持久化配置中加载，若无则初始化默认底线池
 if "all_factories" not in st.session_state:
-  # 检查 factory_manager 是否提供了获取持久化工厂列表的函数，否则从用户权限配置或默认安全初始化
   if hasattr(factory_manager, "load_factory_list"):
     st.session_state["all_factories"] = factory_manager.load_factory_list()
   else:
-    # 如果没有专属持久化函数，则从当前所有用户的 allowed_factories 动态聚合收录，彻底根除硬编码复活
     collected_factories = set()
     users_dict = st.session_state["user_db"].get("credentials", {}).get("usernames", {})
     for u_data in users_dict.values():
@@ -118,7 +116,6 @@ if "all_factories" not in st.session_state:
     if collected_factories:
       st.session_state["all_factories"] = list(collected_factories)
     else:
-      # 仅在首次全新部署且没有任何配置时赋予基础默认值
       st.session_state["all_factories"] = [
           "shanxihg",
           "太原分厂",
@@ -130,7 +127,7 @@ if "factory_trash" not in st.session_state:
   st.session_state["factory_trash"] = []
 
 # ============================================================
-# 2. 用户登录认证（增加防刷新旁路判定）
+# 2. 用户登录认证（修复退出登录无法清除状态及URL残留的问题）
 # ============================================================
 authenticator = stauth.Authenticate(
     st.session_state["user_db"]["credentials"],
@@ -139,6 +136,14 @@ authenticator = stauth.Authenticate(
     st.session_state["user_db"]["cookie"]["expiry_days"],
     auto_hash=True,
 )
+
+# 如果 session 中明确没有登录状态，或者用户在组件里点了退出，必须强制清理 URL 残留
+if not st.session_state.get("authentication_status"):
+  st.session_state.pop("username", None)
+  st.session_state.pop("authentication_status", None)
+  if "auth_status" in st.query_params or "logged_username" in st.query_params:
+    st.query_params.clear()
+    st.rerun()
 
 # 检查当前是否已经成功登录（从 Session 或 URL query 中恢复）
 is_logged_in = False

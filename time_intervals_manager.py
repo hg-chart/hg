@@ -83,6 +83,15 @@ def save_trash_bin(trash, vault_dir):
 
 def render_time_intervals_manager(vault_dir, df_raw, time_col):
     """渲染时间段方案选择、编辑、回收站及新增时段的完整交互逻辑"""
+    
+    # 【核心修复】：基于 vault_dir（工厂隔离路径）进行状态检查，若切换工厂则强制重置缓存，杜绝跨工厂混淆
+    if st.session_state.get("current_intervals_vault") != vault_dir:
+        st.session_state["current_intervals_vault"] = vault_dir
+        st.session_state.saved_templates = load_persistent_templates(vault_dir)
+        st.session_state.trash_bin = load_trash_bin(vault_dir)
+        st.session_state.intervals = []
+        st.session_state.pop("current_scheme_name", None)
+
     if "saved_templates" not in st.session_state:
         st.session_state.saved_templates = load_persistent_templates(vault_dir)
     if "trash_bin" not in st.session_state:

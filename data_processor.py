@@ -51,7 +51,7 @@ def load_and_process_data(active_paths):
 
 
 def render_column_and_filter_config(columns):
-    """渲染数据列选择、坐标轴自定义命名和负荷区间过滤配置（支持上下调换与动态适配）"""
+    """渲染数据列选择、坐标轴自定义命名和动态指标过滤配置（支持上下调换与全动态适配）"""
     st.subheader("2. 数据列选择与坐标轴命名配置")
     
     # 默认选中索引
@@ -59,7 +59,7 @@ def render_column_and_filter_config(columns):
     if "W3.UNIT1.10DEHDCSAI03" in columns:
         default_load_index = columns.index("W3.UNIT1.10DEHDCSAI03")
 
-    # 第一行：自定义名称输入框（原蓝框内容，置于上方）
+    # 第一行：自定义名称输入框（置于上方）
     col1_top, col2_top, col3_top = st.columns(3)
     with col1_top:
         time_custom_label = st.text_input("横轴自定义名称", value="", placeholder="留空则默认取字段名")
@@ -68,7 +68,7 @@ def render_column_and_filter_config(columns):
     with col3_top:
         pressure_custom_label = st.text_input("右纵轴自定义名称", value="", placeholder="留空则默认取字段名")
 
-    # 第二行：数据来源选择下拉框（原红框内容，置于下方）
+    # 第二行：数据来源选择下拉框（置于下方）
     col1_bot, col2_bot, col3_bot = st.columns(3)
     with col1_bot:
         time_col = st.selectbox("横坐标轴（时间列）请选择数据来源", columns, index=0)
@@ -77,7 +77,7 @@ def render_column_and_filter_config(columns):
     with col3_bot:
         pressure_col = st.selectbox("右纵轴请选择数据来源", columns, index=min(2, len(columns) - 1))
 
-    # 动态计算最终坐标轴显示名称：若未输入自定义名称，则自动采用下拉选择的字段名或组合
+    # 动态计算最终坐标轴显示名称
     final_time_label = time_custom_label.strip() if time_custom_label.strip() else time_col
     
     raw_load_label = load_custom_label.strip() if load_custom_label.strip() else load_col
@@ -86,12 +86,15 @@ def render_column_and_filter_config(columns):
     raw_pressure_label = pressure_custom_label.strip() if pressure_custom_label.strip() else pressure_col
     final_pressure_label = f"{raw_pressure_label}（{pressure_col}）"
 
-    st.subheader("3. 负荷过滤配置（可选：支持单值下限或闭区间）")
+    # 提取纯文本的主指标名称（用于第三部分的动态标题），如果没填自定义名称则取左纵轴字段名
+    main_metric_name = load_custom_label.strip() if load_custom_label.strip() else load_col
+
+    st.subheader(f"3. {main_metric_name}过滤配置（可选：支持单值下限或闭区间）")
     f_col1, f_col2 = st.columns(2)
     with f_col1:
-        min_threshold_text = st.text_input("负荷下限阈值（留空则不限制下限）", value="")
+        min_threshold_text = st.text_input(f"{main_metric_name}下限阈值（留空则不限制下限）", value="")
     with f_col2:
-        max_threshold_text = st.text_input("负荷上限阈值（留空则只做大于等于下限过滤）", value="")
+        max_threshold_text = st.text_input(f"{main_metric_name}上限阈值（留空则只做大于等于下限过滤）", value="")
 
     min_threshold = None
     max_threshold = None
@@ -102,18 +105,18 @@ def render_column_and_filter_config(columns):
             min_threshold = float(min_threshold_text.strip())
         except ValueError:
             filter_valid = False
-            st.error("负荷下限必须是数字，例如 240。")
+            st.error(f"{main_metric_name}下限必须是数字。")
 
     if max_threshold_text.strip():
         try:
             max_threshold = float(max_threshold_text.strip())
         except ValueError:
             filter_valid = False
-            st.error("负荷上限必须是数字，例如 250。")
+            st.error(f"{main_metric_name}上限必须是数字。")
 
     if filter_valid and min_threshold is not None and max_threshold is not None:
         if min_threshold > max_threshold:
             filter_valid = False
-            st.error("负荷下限不能大于上限！")
+            st.error(f"{main_metric_name}下限不能大于上限！")
 
     return time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid, final_time_label, final_load_label, final_pressure_label

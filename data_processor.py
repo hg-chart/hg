@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """模块三：数据读取与清洗过滤"""
+import json
+import os
 from pathlib import Path
 import pandas as pd
 import streamlit as st
@@ -8,6 +10,27 @@ COLUMN_ALIASES = {
     "压差": "W3.FW.AHTE10CP201F",
     "负荷": "W3.UNIT1.10DEHDCSAI03",
 }
+
+CONFIG_FILE = "factory_axis_configs.json"
+
+def _load_all_axis_configs():
+    """从本地 JSON 文件加载所有工厂的坐标轴配置"""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def _save_all_axis_configs(configs):
+    """将所有工厂的坐标轴配置保存到本地 JSON 文件"""
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(configs, f, ensure_ascii=False, indent=4)
+    except Exception:
+        pass
+
 
 def load_and_process_data(active_paths):
     """读取并合并 CSV / Excel 文件，返回原始 DataFrame 与列名列表"""
@@ -51,62 +74,62 @@ def load_and_process_data(active_paths):
 
 
 def render_column_and_filter_config(columns):
-    """渲染数据列选择、坐标轴自定义命名、坐标轴名称锁定记忆与动态提示词绑定"""
+    """渲染数据列选择、坐标轴自定义命名、本地持久化记忆与修改按钮控制"""
     
-    # 获取当前选中的工厂名称（用于实现按工厂隔离保存配置）
+    # 获取当前选中的工厂名称
     current_factory = st.session_state.get("selected_factory", "default_factory")
-    config_state_key = f"axis_config_locked_{current_factory}"
-    cache_key_prefix = f"factory_axis_cfg_{current_factory}"
     
-    has_cached_config = cache_key_prefix in st.session_state
+    # 加载磁盘中的所有工厂配置
+    all_configs = _load_all_axis_configs()
+    factory_cfg = all_configs.get(current_factory, {})
+    
+    config_state_key = f"axis_config_locked_{current_factory}"
+    has_persisted_config = bool(factory_cfg)
     
     if config_state_key not in st.session_state:
-        st.session_state[config_state_key] = has_cached_config
+        st.session_state[config_state_key] = has_persisted_config
 
     st.subheader("2. 数据列选择与坐标轴命名配置")
 
     # 1. 红色框部分：坐标轴自定义名称（放在最上面）
-    if st.session_state[config_state_key] and has_cached_config:
-        cfg = st.session_state[cache_key_prefix]
-        
+    if st.session_state[config_state_key] and has_persisted_config:
         info_col1, info_col2, info_col3, btn_col = st.columns([2, 2, 2, 1])
         with info_col1:
-            st.markdown(f"**横轴自定义名**：`{cfg['time_custom'] or '未命名'}`")
+            st.markdown(f"**横轴自定义名**：`{factory_cfg.get('time_custom') or '未命名'}`")
         with info_col2:
-            st.markdown(f"**左纵轴自定义名**：`{cfg['load_custom'] or '未命名'}`")
+            st.markdown(f"**左纵轴自定义名**：`{factory_cfg.get('load_custom') or '未命名'}`")
         with info_col3:
-            st.markdown(f"**右纵轴自定义名**：`{cfg['pressure_custom'] or '未命名'}`")
+            st.markdown(f"**右纵轴自定义名**：`{factory_cfg.get('pressure_custom') or '未命名'}`")
         with btn_col:
             if st.button("✏️ 修改", key=f"btn_edit_axis_{current_factory}", type="secondary", use_container_width=True):
                 st.session_state[config_state_key] = False
                 st.rerun()
                 
-        time_custom_label = cfg["time_custom"]
-        load_custom_label = cfg["load_custom"]
-        pressure_custom_label = cfg["pressure_custom"]
+        time_custom_label = factory_cfg.get("time_custom", "")
+        load_custom_label = factory_cfg.get("load_custom", "")
+        pressure_custom_label = factory_cfg.get("pressure_custom", "")
         
     else:
         st.info("💡 当前坐标轴名称尚未锁定，或您正在修改。调整完成后点击下方“保存并锁定坐标轴名称配置”即可记住此设置。")
         
-        default_cfg = st.session_state.get(cache_key_prefix, {})
-        
         col1_top, col2_top, col3_top = st.columns(3)
         with col1_top:
-            time_custom_label = st.text_input("横轴自定义名称", value=default_cfg.get("time_custom", ""), placeholder="留空则默认取字段名")
+            time_custom_label = st.text_input("横轴自定义名称", value=factory_cfg.get("time_custom", ""), placeholder="留空则默认取字段名")
         with col2_top:
-            load_custom_label = st.text_input("左纵轴自定义名称", value=default_cfg.get("load_custom", ""), placeholder="留空则默认取字段名")
+            load_custom_label = st.text_input("左纵轴自定义名称", value=factory_cfg.get("load_custom", ""), placeholder="留空则默认取字段名")
         with col3_top:
-            pressure_custom_label = st.text_input("右纵轴自定义名称", value=default_cfg.get("pressure_custom", ""), placeholder="留空则默认取字段名")
+            pressure_custom_label = st.text_input("右纵轴自定义名称", value=factory_cfg.get("pressure_custom", ""), placeholder="留空则默认取字段名")
 
         # 按钮放在红色框下方、蓝色框上面
         if st.button("💾 保存并锁定坐标轴名称配置", key=f"btn_save_axis_{current_factory}", type="primary"):
-            st.session_state[cache_key_prefix] = {
+            all_configs[current_factory] = {
                 "time_custom": time_custom_label,
                 "load_custom": load_custom_label,
                 "pressure_custom": pressure_custom_label,
             }
+            _save_all_axis_configs(all_configs)
             st.session_state[config_state_key] = True
-            st.success("坐标轴名称配置已成功保存并锁定！")
+            st.success("坐标轴名称配置已成功保存并永久锁定！")
             st.rerun()
 
     st.markdown("---")

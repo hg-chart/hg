@@ -51,34 +51,39 @@ def load_and_process_data(active_paths):
 
 
 def render_column_and_filter_config(columns):
-    """渲染数据列选择、坐标轴自定义命名和负荷区间过滤配置"""
+    """渲染数据列选择、坐标轴自定义命名和负荷区间过滤配置（支持上下调换与动态适配）"""
     st.subheader("2. 数据列选择与坐标轴命名配置")
     
-    col1, col2, col3 = st.columns(3)
-
+    # 默认选中索引
     default_load_index = min(1, len(columns) - 1)
     if "W3.UNIT1.10DEHDCSAI03" in columns:
         default_load_index = columns.index("W3.UNIT1.10DEHDCSAI03")
 
-    with col1:
+    # 第一行：自定义名称输入框（原蓝框内容，置于上方）
+    col1_top, col2_top, col3_top = st.columns(3)
+    with col1_top:
+        time_custom_label = st.text_input("横轴自定义名称", value="", placeholder="留空则默认取字段名")
+    with col2_top:
+        load_custom_label = st.text_input("左纵轴自定义名称", value="", placeholder="留空则默认取字段名")
+    with col3_top:
+        pressure_custom_label = st.text_input("右纵轴自定义名称", value="", placeholder="留空则默认取字段名")
+
+    # 第二行：数据来源选择下拉框（原红框内容，置于下方）
+    col1_bot, col2_bot, col3_bot = st.columns(3)
+    with col1_bot:
         time_col = st.selectbox("横坐标轴（时间列）请选择数据来源", columns, index=0)
-        time_custom_label = st.text_input("横轴自定义名称（留空则默认取字段名）", value="")
+    with col2_bot:
+        load_col = st.selectbox("左纵轴请选择数据来源", columns, index=default_load_index)
+    with col3_bot:
+        pressure_col = st.selectbox("右纵轴请选择数据来源", columns, index=min(2, len(columns) - 1))
 
-    with col2:
-        load_col = st.selectbox("左纵轴（机组负荷）请选择数据来源", columns, index=default_load_index)
-        load_custom_label = st.text_input("左纵轴自定义名称（留空则默认取“机组负荷”）", value="")
-
-    with col3:
-        pressure_col = st.selectbox("右纵轴（压差）请选择数据来源", columns, index=min(2, len(columns) - 1))
-        pressure_custom_label = st.text_input("右纵轴自定义名称（留空则默认取“压差”）", value="")
-
-    # 动态计算最终坐标轴显示名称：若未输入自定义名称，则默认使用字段名或标准组合
+    # 动态计算最终坐标轴显示名称：若未输入自定义名称，则自动采用下拉选择的字段名或组合
     final_time_label = time_custom_label.strip() if time_custom_label.strip() else time_col
     
-    raw_load_label = load_custom_label.strip() if load_custom_label.strip() else "机组负荷"
+    raw_load_label = load_custom_label.strip() if load_custom_label.strip() else load_col
     final_load_label = f"{raw_load_label}（{load_col}）"
 
-    raw_pressure_label = pressure_custom_label.strip() if pressure_custom_label.strip() else "压差"
+    raw_pressure_label = pressure_custom_label.strip() if pressure_custom_label.strip() else pressure_col
     final_pressure_label = f"{raw_pressure_label}（{pressure_col}）"
 
     st.subheader("3. 负荷过滤配置（可选：支持单值下限或闭区间）")

@@ -1,12 +1,21 @@
 # -*- coding: utf-8 -*-
-"""模块四：运行时间段方案管理"""
+"""模块四：运行时间段方案管理（每个工厂独立存储、互不串用）
+
+隔离方式：
+  - 当前工厂取自 st.session_state["selected_factory"]（由 app.py 在每次运行时设置），
+    不再依赖全局的 "uploaded_vault" 软链接（它是整个服务器共用的，切换工厂时会串）。
+  - R2 中的存放位置：device-monitor/<工厂>/templates_vault.json 与 trash_vault.json，
+    使用完整 Key 读写，与 r2_storage.BASE_PREFIX 这个全局变量无关。
+  - 切换工厂时，页面里的方案、已选时段、回收站、图表缓存全部清空并按新工厂重新加载。
+  - 新工厂没有任何方案时显示为空，不带入任何预设时段。
+"""
 import os
 import json
 import logging
 from datetime import datetime, timedelta
 import pandas as pd
 import streamlit as st
-import r2_storage
+import factory_registry as freg
 
 TEMPLATES_FILE_NAME = "templates_vault.json"
 TRASH_FILE_NAME = "trash_vault.json"
@@ -17,73 +26,116 @@ def default_templates():
     return {}
 
 
-def load_persistent_templates(vault_dir):
-    templates_file = os.path.join(vault_dir, TEMPLATES_FILE_NAME)
-    if os.path.exists(templates_file):
+def _scope(vault_dir):
+    """返回 (当前工厂名或None, 该工厂的本地目录)。"""
+    factory = st.session_state.get("selected_factory")
+    if factory:
+        local_dir = f"uploaded_vault_{factory}"
+    else:
+        # 兜底：没有工厂信息时，解析软链接得到真实目录，至少让目录变化可被识别
+        local_dir = os.path.realpath(vault_dir)
+        factory = None
+    os.makedirs(local_dir, exist_ok=True)
+    return factory, local_dir
+
+
+def _scope_id(vault_dir):
+    factory, local_dir = _scope(vault_dir)
+    return factory or local_dir
+
+
+def _read_json(vault_dir, file_name):
+    """读取方案文件：优先 R2（本工厂目录），其次本工厂本地文件。读不到返回 None。"""
+    factory, local_dir = _scope(vault_dir)
+    if factory:
+        prefix = freg.factory_prefix(factory)
+        candidates = [
+            f"{prefix}{file_name}",
+            # 兼容旧版本曾经使用过的存放位置（仍然在本工厂目录之内）
+            f"{prefix}uploaded_vault_{factory}/{file_name}",
+            f"{prefix}uploaded_vault/{file_name}",
+        ]
+        for key in candidates:
+            status, text = freg.get_text(key)
+            if status == "ok":
+                try:
+                    return json.loads(text)
+                except Exception:
+                    logging.exception("R2 中的 %s 内容损坏", key)
+            elif status in ("error", "offline"):
+                break
+    path = os.path.join(local_dir, file_name)
+    if os.path.exists(path):
         try:
-            with open(templates_file, "r", encoding="utf-8") as file:
-                data = json.load(file)
-            if isinstance(data, dict):
-                normalized_data = {}
-                idx = 1
-                for k, v in data.items():
-                    key_name = k if k.startswith("监测数据时间段") else f"监测数据时间段{idx}"
-                    normalized_data[key_name] = v
-                    idx += 1
-                return normalized_data
+            with open(path, "r", encoding="utf-8") as file:
+                return json.load(file)
         except Exception:
-            logging.exception("读取历史时段方案失败。")
+            logging.exception("读取本地 %s 失败", path)
+    return None
+
+
+def _write_json(vault_dir, file_name, data):
+    """写本工厂本地文件，并用完整 Key 同步到 R2。返回是否完全成功。"""
+    factory, local_dir = _scope(vault_dir)
+    text = json.dumps(data, ensure_ascii=False, indent=4)
+    try:
+        with open(os.path.join(local_dir, file_name), "w", encoding="utf-8") as file:
+            file.write(text)
+    except Exception as exc:
+        st.error(f"保存到本地失败：{exc}")
+        return False
+    if factory:
+        ok, err = freg.put_text(f"{freg.factory_prefix(factory)}{file_name}", text)
+        if not ok:
+            st.warning(f"已保存到本地，但同步到 R2 失败：{err}")
+            return False
+    return True
+
+
+def load_persistent_templates(vault_dir):
+    data = _read_json(vault_dir, TEMPLATES_FILE_NAME)
+    if isinstance(data, dict):
+        normalized_data = {}
+        idx = 1
+        for k, v in data.items():
+            key_name = k if k.startswith("监测数据时间段") else f"监测数据时间段{idx}"
+            normalized_data[key_name] = v
+            idx += 1
+        return normalized_data
     return default_templates()
 
 
 def save_persistent_templates(templates, vault_dir):
-    templates_file = os.path.join(vault_dir, TEMPLATES_FILE_NAME)
-    try:
-        with open(templates_file, "w", encoding="utf-8") as file:
-            json.dump(templates, file, ensure_ascii=False, indent=4)
-        if r2_storage._get_r2_client() is not None:
-            r2_storage.r2_upload_file(templates_file)
-        return True
-    except Exception as exc:
-        st.error(f"保存时段方案失败：{exc}")
-        return False
+    ok = _write_json(vault_dir, TEMPLATES_FILE_NAME, templates)
+    if not ok:
+        st.error("保存时段方案未能完全成功，请查看上方提示。")
+    return ok
 
 
 def load_trash_bin(vault_dir):
-    trash_file = os.path.join(vault_dir, TRASH_FILE_NAME)
-    if os.path.exists(trash_file):
-        try:
-            with open(trash_file, "r", encoding="utf-8") as file:
-                data = json.load(file)
-            if isinstance(data, dict):
-                return data
-        except Exception:
-            pass
-    return {}
+    data = _read_json(vault_dir, TRASH_FILE_NAME)
+    return data if isinstance(data, dict) else {}
 
 
 def save_trash_bin(trash, vault_dir):
-    trash_file = os.path.join(vault_dir, TRASH_FILE_NAME)
-    try:
-        with open(trash_file, "w", encoding="utf-8") as file:
-            json.dump(trash, file, ensure_ascii=False, indent=4)
-        if r2_storage._get_r2_client() is not None:
-            r2_storage.r2_upload_file(trash_file)
-        return True
-    except Exception:
-        return False
+    return _write_json(vault_dir, TRASH_FILE_NAME, trash)
 
 
 def render_time_intervals_manager(vault_dir, df_raw, time_col):
     """渲染时间段方案选择、编辑、回收站及新增时段的完整交互逻辑"""
     
-    # 切换工厂时，强制根据当前 vault_dir 重新加载属于该工厂的独立时段文件
-    if st.session_state.get("current_intervals_vault") != vault_dir:
-        st.session_state["current_intervals_vault"] = vault_dir
+    # 切换工厂时：清空上一个工厂留在页面里的一切，再按新工厂重新加载
+    scope_id = _scope_id(vault_dir)
+    if st.session_state.get("_intervals_scope") != scope_id:
+        st.session_state["_intervals_scope"] = scope_id
         st.session_state.saved_templates = load_persistent_templates(vault_dir)
         st.session_state.trash_bin = load_trash_bin(vault_dir)
         st.session_state.intervals = []
-        st.session_state.pop("current_scheme_name", None)
+        for stale_key in (
+            "current_scheme_name", "plotted_fig_bytes", "intervals_editor",
+            "s_date", "s_h", "s_m", "s_s", "e_date", "e_h", "e_m", "e_s",
+        ):
+            st.session_state.pop(stale_key, None)
 
     if "saved_templates" not in st.session_state:
         st.session_state.saved_templates = load_persistent_templates(vault_dir)
@@ -93,6 +145,9 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
         st.session_state.intervals = []
 
     st.markdown("### 4. 机组运行数据时间段选择 <span style='color:red; font-size:18px;'>（必选）</span>", unsafe_allow_html=True)
+    _cur_factory = st.session_state.get("selected_factory")
+    if _cur_factory:
+        st.caption(f"当前工厂：{_cur_factory}（以下时间段方案只属于该工厂，与其他工厂互不影响）")
 
     template_options = {}
     for name, intervals_list in st.session_state.saved_templates.items():
@@ -318,6 +373,11 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
 
     default_end = default_start + timedelta(minutes=50)
 
+    # 运行/停止秒数的默认值：沿用本工厂上一个时段的设置，没有则留空（不再写死）
+    _last = st.session_state.intervals[-1] if st.session_state.intervals else {}
+    _default_run = "" if _last.get("run_sec") in (None, "0") else str(_last.get("run_sec", ""))
+    _default_stop = "" if _last.get("stop_sec") in (None, "-") else str(_last.get("stop_sec", ""))
+
     with st.container(border=True):
         st.markdown("➕ **添加新时段**（自动智能衔接，支持秒级精准配置）")
         with st.form("interval_form"):
@@ -345,9 +405,9 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
 
             run_col, stop_col, btn_col = st.columns([2, 2, 1.5])
             with run_col:
-                run_seconds = st.text_input("多频集速运行秒数", value="30")
+                run_seconds = st.text_input("多频集速运行秒数（填 0 表示多频集速没有运行）", value=_default_run, key=f"run_sec_in_{_scope_id(vault_dir)}_{len(st.session_state.intervals)}")
             with stop_col:
-                stop_seconds = st.text_input("停止秒数（运行秒数若为0，此项不用填，系统自动设置为-）", value="780")
+                stop_seconds = st.text_input("停止秒数（运行秒数若为0，此项不用填，系统自动设置为-）", value=_default_stop, key=f"stop_sec_in_{_scope_id(vault_dir)}_{len(st.session_state.intervals)}")
             with btn_col:
                 st.write("")
                 add_interval = st.form_submit_button("添加时段", use_container_width=True)

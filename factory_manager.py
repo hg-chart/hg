@@ -7,26 +7,6 @@ import streamlit as st
 import r2_storage
 
 
-def get_auto_discovered_factories(default_factories=None):
-  """自动扫描本地目录或持久化存储，发现所有已存在的工厂，防止刷新后丢失"""
-  if default_factories is None:
-    default_factories = ["一厂", "二厂"]
-  
-  discovered = set(default_factories)
-  
-  # 遍历当前运行目录下所有文件夹，寻找形如 uploaded_vault_XXX 的隔离目录
-  try:
-    for item in os.listdir("."):
-      if os.path.isdir(item) and item.startswith("uploaded_vault_"):
-        fac_name = item.replace("uploaded_vault_", "", 1)
-        if fac_name:
-          discovered.add(fac_name)
-  except Exception:
-    pass
-    
-  return sorted(list(discovered))
-
-
 def purge_factory_r2_data(target_factory):
   """彻底删除工厂时清理 Cloudflare R2 数据"""
   try:
@@ -107,18 +87,9 @@ def render_factory_management(user_role, allowed_factories):
   """渲染侧边栏工厂工作区选择与工厂管理回收站模块"""
   st.sidebar.title("🏭 工厂工作区")
 
-  # 确保 session_state 中初始化了 all_factories，并通过自动扫描防丢失
+  # 确保 session_state 初始化（如果主程序没有初始化，这里提供默认值）
   if "all_factories" not in st.session_state:
-    st.session_state["all_factories"] = get_auto_discovered_factories(["一厂", "二厂"])
-  else:
-    # 每次渲染时同步盘活自动发现的工厂，防止刷新丢失
-    discovered = get_auto_discovered_factories(st.session_state["all_factories"])
-    for fac in discovered:
-      if fac not in st.session_state["all_factories"] and (
-          "factory_trash" not in st.session_state or fac not in st.session_state["factory_trash"]
-      ):
-        st.session_state["all_factories"].append(fac)
-
+    st.session_state["all_factories"] = ["一厂", "二厂"]
   if "factory_trash" not in st.session_state:
     st.session_state["factory_trash"] = []
 
@@ -170,11 +141,6 @@ def render_factory_management(user_role, allowed_factories):
           st.warning("该工厂已存在或已在回收站中！")
         else:
           st.session_state["all_factories"].append(new_fac_name)
-          
-          # 预先创建该工厂对应的本地文件夹，确保下次刷新能被自动扫描发现
-          os.makedirs(f"uploaded_vault_{new_fac_name}", exist_ok=True)
-          os.makedirs(f"file_trash_{new_fac_name}", exist_ok=True)
-          
           st.success(f"已成功添加工厂：{new_fac_name}")
           st.rerun()
 

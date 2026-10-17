@@ -51,7 +51,7 @@ def load_and_process_data(active_paths):
 
 
 def render_column_and_filter_config(columns):
-    """渲染数据列选择、坐标轴自定义命名、坐标轴名称锁定记忆与修改按钮控制"""
+    """渲染数据列选择、坐标轴自定义命名、坐标轴名称锁定记忆与动态提示词绑定"""
     
     # 获取当前选中的工厂名称（用于实现按工厂隔离保存配置）
     current_factory = st.session_state.get("selected_factory", "default_factory")
@@ -111,18 +111,23 @@ def render_column_and_filter_config(columns):
 
     st.markdown("---")
 
-    # 2. 蓝色框部分：数据来源选择下拉框（放在红框和按钮的下方）
+    # 动态计算标签名，确保蓝色框中的提示文字能够完全跟随绿色椭圆框的输入变量变化
+    current_time_var = time_custom_label.strip() if time_custom_label.strip() else "时间列"
+    current_load_var = load_custom_label.strip() if load_custom_label.strip() else "左纵轴"
+    current_pressure_var = pressure_custom_label.strip() if pressure_custom_label.strip() else "右纵轴"
+
+    # 2. 蓝色框部分：数据来源选择下拉框（提示词动态绑定变量）
     default_load_index = min(1, len(columns) - 1)
     if "W3.UNIT1.10DEHDCSAI03" in columns:
         default_load_index = columns.index("W3.UNIT1.10DEHDCSAI03")
 
     col1_bot, col2_bot, col3_bot = st.columns(3)
     with col1_bot:
-        time_col = st.selectbox("横坐标轴（时间列）请选择数据来源", columns, index=0)
+        time_col = st.selectbox(f"横坐标轴（{current_time_var}）请选择数据来源", columns, index=0)
     with col2_bot:
-        load_col = st.selectbox("左纵轴请选择数据来源", columns, index=default_load_index)
+        load_col = st.selectbox(f"左纵轴（{current_load_var}）请选择数据来源", columns, index=default_load_index)
     with col3_bot:
-        pressure_col = st.selectbox("右纵轴请选择数据来源", columns, index=min(2, len(columns) - 1))
+        pressure_col = st.selectbox(f"右纵轴（{current_pressure_var}）请选择数据来源", columns, index=min(2, len(columns) - 1))
 
     # 动态计算最终显示名称
     final_time_label = time_custom_label.strip() if time_custom_label.strip() else time_col

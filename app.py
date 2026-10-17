@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（支持用户数据持久化、彻底防刷新掉线与正常退出登录）"""
+"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（完美兼顾刷新不掉线与正常退出登录）"""
 
 import inspect
 import os
@@ -121,7 +121,7 @@ if "factory_trash" not in st.session_state:
   st.session_state["factory_trash"] = []
 
 # ============================================================
-# 2. 用户登录认证（使用 authenticator 自身的 Cookie 持久化）
+# 2. 用户登录认证与 Cookie 状态托管
 # ============================================================
 authenticator = stauth.Authenticate(
     st.session_state["user_db"]["credentials"],
@@ -131,77 +131,66 @@ authenticator = stauth.Authenticate(
     auto_hash=True,
 )
 
-# 重要：
-# 不再通过 URL 中的 auth_status / logged_username 恢复登录。
-# 仅凭 URL 参数就把 authentication_status 设为 True，既会干扰退出登录，
-# 也可能让知道用户名的人伪造登录状态。刷新后保持登录应交给 authenticator 的 Cookie。
-# 清除旧版本遗留的参数，但绝不根据这些参数授予登录状态。
-try:
-    old_auth_status = st.query_params.get("auth_status")
-    old_logged_username = st.query_params.get("logged_username")
-    if old_auth_status is not None or old_logged_username is not None:
-        st.query_params.pop("auth_status", None)
-        st.query_params.pop("logged_username", None)
-except Exception:
-    # 不同 Streamlit 版本的 query_params 行为可能略有差异；
-    # URL 参数清理失败不应阻止正常登录流程。
-    pass
+# 核心优化：
+# 不再依赖不可靠的 URL 传参（auth_status/logged_username）来防刷新掉线。
+# 而是直接依赖 authenticator 内部自动管理的 Cookie 状态及 session_state。
+is_logged_in = False
 
-# 如果认证组件已经明确将状态置为 False，视为未登录。
-# 不在这里重新设置 authentication_status=True，也不再依赖 URL 参数恢复状态。
-if st.session_state.get("authentication_status") is False:
-    st.session_state.pop("username", None)
-    st.session_state.pop("name", None)
-    is_logged_in = False
-else:
-    is_logged_in = (
-        st.session_state.get("authentication_status") is True
-        and bool(st.session_state.get("username"))
-    )
+# 检查 session 中的认证状态
+if st.session_state.get("authentication_status") is True and st.session_state.get("username"):
+  is_logged_in = True
 
 if not is_logged_in:
-    # 未登录状态：渲染登录界面。兼容不同版本的 streamlit-authenticator。
-    login_parameters = inspect.signature(authenticator.login).parameters
-    if "form_name" in login_parameters:
-        login_result = authenticator.login("请登录设备运行数据分析系统", "main")
-    elif "location" in login_parameters:
-        login_result = authenticator.login(location="main")
-    else:
-        login_result = authenticator.login()
+  # 未登录状态：渲染登录界面
+  login_parameters = inspect.signature(authenticator.login).parameters
+  if "form_name" in login_parameters:
+    login_result = authenticator.login("请登录设备运行数据分析系统", "main")
+  elif "location" in login_parameters:
+    login_result = authenticator.login(location="main")
+  else:
+    login_result = authenticator.login()
 
-    if isinstance(login_result, (tuple, list)) and len(login_result) == 3:
-        name, authentication_status, username = login_result
-    else:
-        name = st.session_state.get("name")
-        authentication_status = st.session_state.get("authentication_status")
-        username = st.session_state.get("username")
-
-    if authentication_status is True and username:
-        st.session_state["authentication_status"] = True
-        st.session_state["username"] = username
-        st.session_state["name"] = name
-        # 不写入 URL 登录标记。Cookie 由 authenticator 自己管理。
-        st.rerun()
-    elif authentication_status is False:
-        st.error("❌ 用户名或密码错误")
-        st.stop()
-    else:
-        st.info("👉 请输入您的登录凭据以访问系统")
-        st.stop()
-else:
+  if isinstance(login_result, (tuple, list)) and len(login_result) == 3:
+    name, authentication_status, username = login_result
+  else:
+    name = st.session_state.get("name")
+    authentication_status = st.session_state.get("authentication_status")
     username = st.session_state.get("username")
-    authentication_status = True
 
-# 再检查账号是否仍存在，防止已删除账号继续访问。
-if username not in st.session_state["user_db"]["credentials"]["usernames"]:
-    st.error("登录账号不存在或权限不足，请重新登录。")
-    for key in ("authentication_status", "username", "name"):
-        st.session_state.pop(key, None)
-    try:
-        st.query_params.clear()
-    except Exception:
-        pass
+  if authentication_status is True:
+    st.session_state["authentication_status"] = True
+    st.session_state["username"] = username
+    st.session_state["name"] = name
+    # 清理可能残留的 URL 垃圾参数
+    if len(st.query_params) > 0:
+      st.query_params.clear()
     st.rerun()
+  elif authentication_status is False:
+    st.error("❌ 用户名或密码错误")
+    st.stop()
+  else:
+    st.info("👉 请输入您的登录凭据以访问系统")
+    st.stop()
+else:
+  username = st.session_state.get("username")
+  authentication_status = True
+
+# 如果用户点击了退出登录，st.session_state["authentication_status"] 会被 authenticator 设为 False 或 None
+if auth_status is False or not username or username not in st.session_state["user_db"]["credentials"]["usernames"]:
+  if auth_status is False:
+    # 用户明确点击了退出登录：彻底清理状态并清空网址参数
+    st.session_state["authentication_status"] = None
+    st.session_state.pop("username", None)
+    st.session_state.pop("name", None)
+    if len(st.query_params) > 0:
+      st.query_params.clear()
+    st.rerun()
+  else:
+    st.error("登录账号不存在或权限不足，请重新登录。")
+    st.session_state.pop("authentication_status", None)
+    st.session_state.pop("username", None)
+    st.query_params.clear()
+    st.stop()
 
 # ============================================================
 # 3. 模块化调用侧边栏管理组件与显隐状态控制

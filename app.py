@@ -2,6 +2,7 @@
 """设备运行数据分析系统 - 工厂安全隔离路由网关入口（专为解决 F5 刷新掉线打造的强持久化版本）"""
 
 import inspect
+import json
 import os
 import runpy
 import secrets
@@ -93,45 +94,45 @@ st.markdown(
 )
 
 # ============================================================
-# 1. 全局数据源初始化
+# 1. 全局数据源与持久化工厂列表初始化
 # ============================================================
+FACTORIES_CONFIG_FILE = "factories_config.json"
+
+def load_persistent_factories():
+    """从本地配置文件加载工厂列表，若不存在则初始化默认工厂"""
+    if os.path.exists(FACTORIES_CONFIG_FILE):
+        try:
+            with open(FACTORIES_CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list) and data:
+                    return data
+        except Exception:
+            pass
+    # 默认初始工厂
+    default_facs = ["shanxihg", "太原分厂", "华东一厂", "华东二厂"]
+    save_persistent_factories(default_facs)
+    return default_facs
+
+def save_persistent_factories(factories_list):
+    """保存工厂列表到本地持久化文件"""
+    try:
+        with open(FACTORIES_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(factories_list, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        print(f"保存工厂配置失败: {e}")
+
 if "user_db" not in st.session_state:
   st.session_state["user_db"] = user_manager.load_user_db()
 
 if "all_factories" not in st.session_state:
-  if hasattr(factory_manager, "load_factory_list"):
-    st.session_state["all_factories"] = factory_manager.load_factory_list()
-  else:
-    collected_factories = set()
-    users_dict = st.session_state["user_db"].get("credentials", {}).get("usernames", {})
-    for u_data in users_dict.values():
-      factories = u_data.get("allowed_factories", [])
-      if isinstance(factories, list):
-        collected_factories.update(factories)
-    
-    if collected_factories:
-      st.session_state["all_factories"] = list(collected_factories)
-    else:
-      st.session_state["all_factories"] = [
-          "shanxihg",
-          "太原分厂",
-          "华东一厂",
-          "华东二厂",
-      ]
+  # 统一从持久化配置文件加载，确保新增工厂刷新后绝不丢失
+  st.session_state["all_factories"] = load_persistent_factories()
 
 if "factory_trash" not in st.session_state:
   st.session_state["factory_trash"] = []
 
 # ============================================================
 # 2. 用户登录认证与「刷新不掉线 / 退出能退出」的会话托管
-#
-# 设计要点（只有一个“会话来源”，刷新和退出才不会打架）：
-#  - 登录成功后，服务器生成一个随机会话令牌（不可猜），保存在服务器内存里，
-#    并写入网址参数 ?s=令牌。F5 刷新时网址还在，凭令牌恢复登录。
-#  - 点击“退出登录”时，服务器立刻作废该令牌并清空网址参数，
-#    所以刷新不会再恢复，也不会被旧参数重新登录。
-#  - streamlit_authenticator 自带的 cookie 不再参与“恢复登录”（见下方随机 cookie 名），
-#    避免它和令牌机制互相抢着决定“是否已登录”。
 # ============================================================
 SESSION_TTL_SECONDS = 12 * 3600  # 令牌有效期（每次刷新自动顺延）
 
@@ -166,8 +167,6 @@ def _revoke_token(token):
     _session_store().pop(token, None)
 
 
-# 每个浏览器会话使用不同的 authenticator cookie 名：刷新后换新名，
-# 旧 cookie 不会再自动登录，登录状态完全由上面的令牌决定。
 if "_auth_cookie_name" not in st.session_state:
   st.session_state["_auth_cookie_name"] = f"hg_auth_{secrets.token_hex(6)}"
 
@@ -179,12 +178,10 @@ authenticator = stauth.Authenticate(
     auto_hash=True,
 )
 
-# 清掉旧版本遗留的不安全网址参数（任何人手改网址就能冒充登录的那种）
 for _legacy in ("auth_status", "logged_username"):
   if _legacy in st.query_params:
     del st.query_params[_legacy]
 
-# 脚本刚启动、未渲染任何组件前：凭网址里的会话令牌恢复登录（F5 刷新不掉线）
 if st.session_state.get("authentication_status") is not True:
   _url_token = st.query_params.get("s")
   if _url_token:
@@ -195,16 +192,13 @@ if st.session_state.get("authentication_status") is not True:
       st.session_state["name"] = st.session_state["user_db"]["credentials"]["usernames"][_restored_user].get("name", _restored_user)
       st.session_state["_my_token"] = _url_token
     else:
-      # 令牌无效或已过期（例如已退出登录）：清掉网址参数，回到登录页
       st.query_params.clear()
 
-# 检查当前内存中是否已处于登录状态
 is_logged_in = False
 if st.session_state.get("authentication_status") is True and st.session_state.get("username"):
   is_logged_in = True
 
 if not is_logged_in:
-  # 未登录状态：渲染登录界面
   login_parameters = inspect.signature(authenticator.login).parameters
   if "form_name" in login_parameters:
     login_result = authenticator.login("请登录设备运行数据分析系统", "main")
@@ -224,7 +218,6 @@ if not is_logged_in:
     st.session_state["authentication_status"] = True
     st.session_state["username"] = username
     st.session_state["name"] = name
-    # 登录成功：签发服务器端会话令牌并写入网址，刷新（F5）时凭它恢复登录
     _new_token = _issue_token(str(username))
     st.session_state["_my_token"] = _new_token
     st.query_params.clear()
@@ -240,7 +233,6 @@ else:
   username = st.session_state.get("username")
   authentication_status = True
 
-# 检查当前用户名合法性
 if not username or username not in st.session_state["user_db"]["credentials"]["usernames"]:
   st.error("登录账号不存在或权限不足，请重新登录。")
   _revoke_token(st.session_state.pop("_my_token", None))
@@ -335,15 +327,12 @@ else:
 
 user_manager.render_user_management(username, user_role, authenticator)
 
-# 退出登录检测：点击“退出登录”后 authenticator 会清除登录状态。
-# 此时立刻作废服务器令牌、清空网址参数并刷新页面，之后再按 F5 也不会被恢复登录。
 if st.session_state.get("authentication_status") is not True:
   _revoke_token(st.session_state.pop("_my_token", None))
   _revoke_token(st.query_params.get("s"))
   st.query_params.clear()
   st.rerun()
 
-# 模块二：工厂选择与增删回收站模块
 selected_factory = factory_manager.render_factory_management(
     user_role, allowed_factories
 )

@@ -22,8 +22,13 @@ def format_num(val):
         return str(int(val))
     return str(val)
 
-def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid, final_time_label="时间", final_load_label="机组负荷", final_pressure_label="压差"):
-    """渲染生成趋势图的触发按钮及预览界面（支持完全动态的自定义坐标轴与指标命名）"""
+def render_chart_generator(
+    df_raw, time_col, load_col, pressure_col, 
+    min_threshold, max_threshold, filter_valid, 
+    final_time_label="时间", final_load_label="机组负荷", final_pressure_label="压差",
+    filter_target_col=None, filter_metric_name="机组负荷"
+):
+    """渲染生成趋势图的触发按钮及预览界面（支持完全动态的过滤变量、坐标轴与区间命名）"""
     if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
         if not filter_valid:
             st.error("请先修正过滤条件的输入错误。")
@@ -46,8 +51,9 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                     actual_time_col = rename_map.get(time_col, time_col)
                     actual_load_col = rename_map.get(load_col, load_col)
                     actual_pressure_col = rename_map.get(pressure_col, pressure_col)
+                    actual_filter_col = rename_map.get(filter_target_col, filter_target_col) if filter_target_col else actual_load_col
 
-                    required = [actual_time_col, actual_load_col, actual_pressure_col]
+                    required = [actual_time_col, actual_load_col, actual_pressure_col, actual_filter_col]
                     missing = [col for col in required if col not in df.columns]
                     if missing:
                         raise KeyError("找不到所选数据列：" + "、".join(missing))
@@ -59,17 +65,19 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                     )
                     df[actual_load_col] = pd.to_numeric(df[actual_load_col], errors="coerce")
                     df[actual_pressure_col] = pd.to_numeric(df[actual_pressure_col], errors="coerce")
-                    df = df.dropna(subset=[actual_time_col, actual_load_col])
+                    df[actual_filter_col] = pd.to_numeric(df[actual_filter_col], errors="coerce")
+                    
+                    df = df.dropna(subset=[actual_time_col, actual_load_col, actual_filter_col])
                     df = df.sort_values(actual_time_col).reset_index(drop=True)
-                    df = df[df[actual_load_col] != 0].copy()
+                    df = df[df[actual_filter_col] != 0].copy()
 
-                    # 区间或单边过滤逻辑
+                    # 动态过滤逻辑（基于用户选中的过滤目标列）
                     if min_threshold is not None and max_threshold is not None:
-                        df = df[(df[actual_load_col] >= min_threshold) & (df[actual_load_col] <= max_threshold)].copy()
+                        df = df[(df[actual_filter_col] >= min_threshold) & (df[actual_filter_col] <= max_threshold)].copy()
                     elif min_threshold is not None:
-                        df = df[df[actual_load_col] >= min_threshold].copy()
+                        df = df[df[actual_filter_col] >= min_threshold].copy()
                     elif max_threshold is not None:
-                        df = df[df[actual_load_col] <= max_threshold].copy()
+                        df = df[df[actual_filter_col] <= max_threshold].copy()
 
                     palette = [
                         ("#85B2FF", "#1E3F66"),
@@ -86,7 +94,6 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                     diagnostics = []
                     periods_detailed_info = []
 
-                    # 动态提取左右两侧指标的纯文本短名称（去掉括号及字段名）
                     load_short_name = final_load_label.split("（")[0] if "（" in final_load_label else final_load_label
                     pressure_short_name = final_pressure_label.split("（")[0] if "（" in final_pressure_label else final_pressure_label
 
@@ -125,11 +132,11 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                             config_str = f"多频集速运行{run_value}s/停止{stop_value}s"
 
                         if min_threshold is not None and max_threshold is not None:
-                            time_prefix = f"{load_short_name} {format_num(min_threshold)}-{format_num(max_threshold)}，机组实际运行时间"
+                            time_prefix = f"{filter_metric_name} {format_num(min_threshold)}-{format_num(max_threshold)}，机组实际运行时间"
                         elif min_threshold is not None:
-                            time_prefix = f"{load_short_name}≥{format_num(min_threshold)}，机组实际运行时间"
+                            time_prefix = f"{filter_metric_name}≥{format_num(min_threshold)}，机组实际运行时间"
                         elif max_threshold is not None:
-                            time_prefix = f"{load_short_name}≤{format_num(max_threshold)}，机组实际运行时间"
+                            time_prefix = f"{filter_metric_name}≤{format_num(max_threshold)}，机组实际运行时间"
                         else:
                             time_prefix = "机组实际运行时间"
 
@@ -191,7 +198,6 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                                 label=f"{pressure_short_name} {period['description']}",
                             )
 
-                        # 使用自定义坐标轴名称
                         ax1.set_xlabel(final_time_label, fontsize=12)
                         ax1.set_ylabel(final_load_label, fontsize=12, color="black")
                         ax2.set_ylabel(final_pressure_label, fontsize=12, color="black")
@@ -232,8 +238,8 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                             frameon=True,
                         )
 
-                        # 完全动态的图表主标题（例如：电流/压差对比趋势图（电流区间：245-250））
-                        chart_title = f"{load_short_name}/{pressure_short_name}对比趋势图（{load_short_name}区间：{cond_str_clean}）"
+                        # 图表顶部标题：动态变量 + 区间（如：电流/压差对比趋势图（电流区间：245-250））
+                        chart_title = f"{load_short_name}/{pressure_short_name}对比趋势图（{filter_metric_name}区间：{cond_str_clean}）"
                         plt.title(chart_title, fontsize=14, pad=20)
 
                         buf = io.BytesIO()
@@ -243,6 +249,7 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                         st.session_state.plotted_title = chart_title
                         st.session_state.plotted_periods_info = periods_detailed_info
                         st.session_state["current_pressure_col"] = actual_pressure_col
+                        st.session_state["current_filter_metric"] = filter_metric_name
                         plt.close(fig)
                         st.success("多时段对比趋势图生成成功！")
 
@@ -260,18 +267,19 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
         with st.container(border=True):
             load_short_name_prev = final_load_label.split("（")[0] if "（" in final_load_label else final_load_label
             pressure_short_name_prev = final_pressure_label.split("（")[0] if "（" in final_pressure_label else final_pressure_label
+            active_metric = st.session_state.get("current_filter_metric", filter_metric_name)
 
             if min_threshold is not None and max_threshold is not None:
-                current_threshold_str = f"{load_short_name_prev}区间 {format_num(min_threshold)}-{format_num(max_threshold)}"
+                current_threshold_str = f"{active_metric}区间 {format_num(min_threshold)}-{format_num(max_threshold)}"
             elif min_threshold is not None:
-                current_threshold_str = f"{load_short_name_prev}≥{format_num(min_threshold)}"
+                current_threshold_str = f"{active_metric}≥{format_num(min_threshold)}"
             elif max_threshold is not None:
-                current_threshold_str = f"{load_short_name_prev}≤{format_num(max_threshold)}"
+                current_threshold_str = f"{active_metric}≤{format_num(max_threshold)}"
             else:
-                current_threshold_str = f"全部{load_short_name_prev}"
+                current_threshold_str = f"全部{active_metric}"
 
-            # 动态替换“条件”为“变量+区间”（如：各时段详细起止与配置说明（电流区间 245-250））
-            st.markdown(f"📋 **各时段详细起止与配置说明（{load_short_name_prev}区间 {cond_str_clean if 'cond_str_clean' in locals() else ''}）**", unsafe_allow_html=True)
+            # 预览上方小标题：动态变量 + 区间
+            st.markdown(f"📋 **各时段详细起止与配置说明（{active_metric}区间 {cond_str_clean if 'cond_str_clean' in locals() else ''}）**", unsafe_allow_html=True)
             
             st.markdown(
                 f"<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 12px; text-align: center;'>"
@@ -317,15 +325,16 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                             scheme_name = "未命名时间段方案"
                         
                         p_col_current = st.session_state.get("current_pressure_col", pressure_col)
+                        active_metric_save = st.session_state.get("current_filter_metric", filter_metric_name)
                         
                         if min_threshold is not None and max_threshold is not None:
-                            load_tag_str = f"{load_short_name_prev}_{format_num(min_threshold)}_{format_num(max_threshold)}"
+                            load_tag_str = f"{active_metric_save}_{format_num(min_threshold)}_{format_num(max_threshold)}"
                         elif min_threshold is not None:
-                            load_tag_str = f"{load_short_name_prev}_≥{format_num(min_threshold)}"
+                            load_tag_str = f"{active_metric_save}_≥{format_num(min_threshold)}"
                         elif max_threshold is not None:
-                            load_tag_str = f"{load_short_name_prev}_≤{format_num(max_threshold)}"
+                            load_tag_str = f"{active_metric_save}_≤{format_num(max_threshold)}"
                         else:
-                            load_tag_str = f"{load_short_name_prev}_全部"
+                            load_tag_str = f"{active_metric_save}_全部"
 
                         time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
                         chart_filename = f"{p_col_current}_{load_tag_str}_{time_str}.png"

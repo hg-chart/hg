@@ -4,7 +4,9 @@
 import inspect
 import os
 import runpy
+import secrets
 import shutil
+import time
 import streamlit as st
 import streamlit_authenticator as stauth
 
@@ -121,24 +123,80 @@ if "factory_trash" not in st.session_state:
   st.session_state["factory_trash"] = []
 
 # ============================================================
-# 2. 用户登录认证与强 URL 状态托管（绝对防 F5 刷新掉线）
+# 2. 用户登录认证与「刷新不掉线 / 退出能退出」的会话托管
+#
+# 设计要点（只有一个“会话来源”，刷新和退出才不会打架）：
+#  - 登录成功后，服务器生成一个随机会话令牌（不可猜），保存在服务器内存里，
+#    并写入网址参数 ?s=令牌。F5 刷新时网址还在，凭令牌恢复登录。
+#  - 点击“退出登录”时，服务器立刻作废该令牌并清空网址参数，
+#    所以刷新不会再恢复，也不会被旧参数重新登录。
+#  - streamlit_authenticator 自带的 cookie 不再参与“恢复登录”（见下方随机 cookie 名），
+#    避免它和令牌机制互相抢着决定“是否已登录”。
 # ============================================================
+SESSION_TTL_SECONDS = 12 * 3600  # 令牌有效期（每次刷新自动顺延）
+
+
+@st.cache_resource
+def _session_store():
+  """服务器端会话表：令牌 -> {用户名, 过期时间}。所有浏览器会话共用。"""
+  return {}
+
+
+def _issue_token(user):
+  token = secrets.token_urlsafe(32)
+  _session_store()[token] = {"u": user, "exp": time.time() + SESSION_TTL_SECONDS}
+  return token
+
+
+def _lookup_token(token):
+  """令牌有效则返回用户名，并顺延有效期；无效/过期返回 None。"""
+  if not token:
+    return None
+  store = _session_store()
+  rec = store.get(token)
+  if not rec or rec["exp"] < time.time():
+    store.pop(token, None)
+    return None
+  rec["exp"] = time.time() + SESSION_TTL_SECONDS
+  return rec["u"]
+
+
+def _revoke_token(token):
+  if token:
+    _session_store().pop(token, None)
+
+
+# 每个浏览器会话使用不同的 authenticator cookie 名：刷新后换新名，
+# 旧 cookie 不会再自动登录，登录状态完全由上面的令牌决定。
+if "_auth_cookie_name" not in st.session_state:
+  st.session_state["_auth_cookie_name"] = f"hg_auth_{secrets.token_hex(6)}"
+
 authenticator = stauth.Authenticate(
     st.session_state["user_db"]["credentials"],
-    st.session_state["user_db"]["cookie"]["name"],
+    st.session_state["_auth_cookie_name"],
     st.session_state["user_db"]["cookie"]["key"],
-    st.session_state["user_db"]["cookie"]["expiry_days"],
+    1,
     auto_hash=True,
 )
 
-# 🔴 核心保障：在脚本刚启动、未做任何组件渲染前，优先通过 URL 查询参数强行恢复会话
-if "auth_status" in st.query_params and st.query_params["auth_status"] == "success":
-  q_user = st.query_params.get("logged_username")
-  if q_user and q_user in st.session_state["user_db"]["credentials"]["usernames"]:
-    st.session_state["username"] = q_user
-    st.session_state["authentication_status"] = True
-    if "name" not in st.session_state:
-      st.session_state["name"] = st.session_state["user_db"]["credentials"]["usernames"][q_user].get("name", q_user)
+# 清掉旧版本遗留的不安全网址参数（任何人手改网址就能冒充登录的那种）
+for _legacy in ("auth_status", "logged_username"):
+  if _legacy in st.query_params:
+    del st.query_params[_legacy]
+
+# 脚本刚启动、未渲染任何组件前：凭网址里的会话令牌恢复登录（F5 刷新不掉线）
+if st.session_state.get("authentication_status") is not True:
+  _url_token = st.query_params.get("s")
+  if _url_token:
+    _restored_user = _lookup_token(_url_token)
+    if _restored_user and _restored_user in st.session_state["user_db"]["credentials"]["usernames"]:
+      st.session_state["username"] = _restored_user
+      st.session_state["authentication_status"] = True
+      st.session_state["name"] = st.session_state["user_db"]["credentials"]["usernames"][_restored_user].get("name", _restored_user)
+      st.session_state["_my_token"] = _url_token
+    else:
+      # 令牌无效或已过期（例如已退出登录）：清掉网址参数，回到登录页
+      st.query_params.clear()
 
 # 检查当前内存中是否已处于登录状态
 is_logged_in = False
@@ -166,9 +224,11 @@ if not is_logged_in:
     st.session_state["authentication_status"] = True
     st.session_state["username"] = username
     st.session_state["name"] = name
-    # 🔴 登录成功的一瞬间，立刻把用户名和成功标识写入网址 URL。这样即使后续按 F5 刷新，网址自带参数也能让系统瞬间恢复状态！
-    st.query_params["auth_status"] = "success"
-    st.query_params["logged_username"] = str(username)
+    # 登录成功：签发服务器端会话令牌并写入网址，刷新（F5）时凭它恢复登录
+    _new_token = _issue_token(str(username))
+    st.session_state["_my_token"] = _new_token
+    st.query_params.clear()
+    st.query_params["s"] = _new_token
     st.rerun()
   elif authentication_status is False:
     st.error("❌ 用户名或密码错误")
@@ -183,6 +243,7 @@ else:
 # 检查当前用户名合法性
 if not username or username not in st.session_state["user_db"]["credentials"]["usernames"]:
   st.error("登录账号不存在或权限不足，请重新登录。")
+  _revoke_token(st.session_state.pop("_my_token", None))
   st.session_state.pop("authentication_status", None)
   st.session_state.pop("username", None)
   if len(st.query_params) > 0:
@@ -273,6 +334,14 @@ else:
   )
 
 user_manager.render_user_management(username, user_role, authenticator)
+
+# 退出登录检测：点击“退出登录”后 authenticator 会清除登录状态。
+# 此时立刻作废服务器令牌、清空网址参数并刷新页面，之后再按 F5 也不会被恢复登录。
+if st.session_state.get("authentication_status") is not True:
+  _revoke_token(st.session_state.pop("_my_token", None))
+  _revoke_token(st.query_params.get("s"))
+  st.query_params.clear()
+  st.rerun()
 
 # 模块二：工厂选择与增删回收站模块
 selected_factory = factory_manager.render_factory_management(

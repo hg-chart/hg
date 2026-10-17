@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（支持用户数据持久化、彻底防刷新掉线与正常退出登录）"""
+"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（完美解决防刷新与退出登录冲突）"""
 
 import inspect
 import os
@@ -121,7 +121,7 @@ if "factory_trash" not in st.session_state:
   st.session_state["factory_trash"] = []
 
 # ============================================================
-# 2. 用户登录认证与防刷新掉线持久化（完美处理退出登录）
+# 2. 用户登录认证与防刷新掉线持久化
 # ============================================================
 authenticator = stauth.Authenticate(
     st.session_state["user_db"]["credentials"],
@@ -131,30 +131,31 @@ authenticator = stauth.Authenticate(
     auto_hash=True,
 )
 
-# 🔴 关键修复：先判断当前认证状态是否为 False（即用户刚点击了“退出登录”）
+# 🔴 核心修复：如果用户点击了退出登录（即 status 为 False），或者 session 中压根没有登录状态，
+# 必须先无条件清理掉 URL 查询参数，并强制重刷，确保彻底清除残留缓存。
 auth_status = st.session_state.get("authentication_status")
 
 if auth_status is False:
-  # 用户点击了退出：必须主动清空 URL 参数，防止被路由逻辑瞬间强行拉回登录状态
   st.session_state.pop("username", None)
   st.session_state.pop("name", None)
+  st.session_state.pop("authentication_status", None)
   if len(st.query_params) > 0:
     st.query_params.clear()
-  is_logged_in = False
-else:
-  # 正常流程：检查 URL 参数实现防刷新掉线
-  if "auth_status" in st.query_params and st.query_params["auth_status"] == "success":
-    if "logged_username" in st.query_params:
-      q_user = st.query_params["logged_username"]
-      if q_user in st.session_state["user_db"]["credentials"]["usernames"]:
-        st.session_state["username"] = q_user
-        st.session_state["authentication_status"] = True
-        if "name" not in st.session_state:
-          st.session_state["name"] = st.session_state["user_db"]["credentials"]["usernames"][q_user].get("name", q_user)
+    st.rerun()
 
-  is_logged_in = False
-  if st.session_state.get("authentication_status") is True and st.session_state.get("username"):
-    is_logged_in = True
+# 正常流程：检查 URL 参数实现防刷新掉线
+if "auth_status" in st.query_params and st.query_params["auth_status"] == "success":
+  if "logged_username" in st.query_params:
+    q_user = st.query_params["logged_username"]
+    if q_user in st.session_state["user_db"]["credentials"]["usernames"]:
+      st.session_state["username"] = q_user
+      st.session_state["authentication_status"] = True
+      if "name" not in st.session_state:
+        st.session_state["name"] = st.session_state["user_db"]["credentials"]["usernames"][q_user].get("name", q_user)
+
+is_logged_in = False
+if st.session_state.get("authentication_status") is True and st.session_state.get("username"):
+  is_logged_in = True
 
 if not is_logged_in:
   # 未登录状态：渲染登录界面

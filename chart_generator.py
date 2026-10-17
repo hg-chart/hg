@@ -23,7 +23,7 @@ def format_num(val):
     return str(val)
 
 def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid, final_time_label="时间", final_load_label="机组负荷", final_pressure_label="压差"):
-    """渲染生成趋势图的触发按钮及预览界面（支持自定义坐标轴命名与负荷区间）"""
+    """渲染生成趋势图的触发按钮及预览界面（支持完全动态的自定义坐标轴命名与负荷区间）"""
     if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
         if not filter_valid:
             st.error("请先修正负荷过滤条件的输入错误。")
@@ -86,6 +86,10 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                     diagnostics = []
                     periods_detailed_info = []
 
+                    # 提取纯文字的左右指标名称，用于图表标题和提示（例如提取“机组负荷”和“压差/电流”）
+                    load_short_name = final_load_label.split("（")[0] if "（" in final_load_label else final_load_label
+                    pressure_short_name = final_pressure_label.split("（")[0] if "（" in final_pressure_label else final_pressure_label
+
                     # 格式化负荷条件文本
                     if min_threshold is not None and max_threshold is not None:
                         cond_str_clean = f"{format_num(min_threshold)}-{format_num(max_threshold)}"
@@ -121,11 +125,11 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                             config_str = f"多频集速运行{run_value}s/停止{stop_value}s"
 
                         if min_threshold is not None and max_threshold is not None:
-                            time_prefix = f"负荷 {format_num(min_threshold)}-{format_num(max_threshold)}，机组实际运行时间"
+                            time_prefix = f"{load_short_name} {format_num(min_threshold)}-{format_num(max_threshold)}，机组实际运行时间"
                         elif min_threshold is not None:
-                            time_prefix = f"负荷≥{format_num(min_threshold)}，机组实际运行时间"
+                            time_prefix = f"{load_short_name}≥{format_num(min_threshold)}，机组实际运行时间"
                         elif max_threshold is not None:
-                            time_prefix = f"负荷≤{format_num(max_threshold)}，机组实际运行时间"
+                            time_prefix = f"{load_short_name}≤{format_num(max_threshold)}，机组实际运行时间"
                         else:
                             time_prefix = "机组实际运行时间"
 
@@ -145,7 +149,7 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                     st.info("🔍 各时段数据检索诊断：" + " | ".join(diagnostics))
 
                     if not plotted_periods:
-                        st.warning("指定时间段和负荷过滤条件下均未检索到有效数据。")
+                        st.warning("指定时间段和过滤条件下均未检索到有效数据。")
                         st.session_state.plotted_fig_bytes = None
                         st.session_state.plotted_title = ""
                         st.session_state.plotted_periods_info = []
@@ -170,7 +174,7 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                                 part[actual_load_col].to_numpy(),
                                 color=period["fill_color"],
                                 alpha=0.50,
-                                label=f"负荷 {period['description']}",
+                                label=f"{load_short_name} {period['description']}",
                             )
                             ax1.plot(
                                 x_values,
@@ -184,10 +188,10 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                                 part[actual_pressure_col].to_numpy(),
                                 color=period["line_color"],
                                 linewidth=1.5,
-                                label=f"压差 {period['description']}",
+                                label=f"{pressure_short_name} {period['description']}",
                             )
 
-                        # 使用自定义的坐标轴名称
+                        # 使用自定义或动态的坐标轴名称
                         ax1.set_xlabel(final_time_label, fontsize=12)
                         ax1.set_ylabel(final_load_label, fontsize=12, color="black")
                         ax2.set_ylabel(final_pressure_label, fontsize=12, color="black")
@@ -228,7 +232,8 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                             frameon=True,
                         )
 
-                        chart_title = f"机组负荷/压差对比趋势图（负荷条件：{cond_str_clean}）"
+                        # 动态图表标题
+                        chart_title = f"{load_short_name}/{pressure_short_name}对比趋势图（条件：{cond_str_clean}）"
                         plt.title(chart_title, fontsize=14, pad=20)
 
                         buf = io.BytesIO()
@@ -253,22 +258,25 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
         st.image(st.session_state.plotted_fig_bytes, use_container_width=True)
 
         with st.container(border=True):
+            load_short_name_prev = final_load_label.split("（")[0] if "（" in final_load_label else final_load_label
+            pressure_short_name_prev = final_pressure_label.split("（")[0] if "（" in final_pressure_label else final_pressure_label
+
             if min_threshold is not None and max_threshold is not None:
-                current_threshold_str = f"负荷区间 {format_num(min_threshold)}-{format_num(max_threshold)}"
+                current_threshold_str = f"{load_short_name_prev}区间 {format_num(min_threshold)}-{format_num(max_threshold)}"
             elif min_threshold is not None:
-                current_threshold_str = f"负荷≥{format_num(min_threshold)}"
+                current_threshold_str = f"{load_short_name_prev}≥{format_num(min_threshold)}"
             elif max_threshold is not None:
-                current_threshold_str = f"负荷≤{format_num(max_threshold)}"
+                current_threshold_str = f"{load_short_name_prev}≤{format_num(max_threshold)}"
             else:
-                current_threshold_str = "全部负荷"
+                current_threshold_str = f"全部{load_short_name_prev}"
 
             st.markdown(f"📋 **各时段详细起止与配置说明（{current_threshold_str}）**", unsafe_allow_html=True)
             
             st.markdown(
-                "<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 12px; text-align: center;'>"
-                "<span style='color: #d93838; font-weight: bold; font-size: 16px;'>💡 提示：</span>"
-                "<span style='font-weight: bold; font-size: 15px; color: #1f1f1f;'>面积图代表负荷，折线图代表压差</span>"
-                "</div>",
+                f"<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 12px; text-align: center;'>"
+                f"<span style='color: #d93838; font-weight: bold; font-size: 16px;'>💡 提示：</span>"
+                f"<span style='font-weight: bold; font-size: 15px; color: #1f1f1f;'>面积图代表{load_short_name_prev}，折线图代表{pressure_short_name_prev}</span>"
+                f"</div>",
                 unsafe_allow_html=True
             )
             

@@ -236,7 +236,6 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                         st.session_state.plotted_fig_bytes = buf.getvalue()
                         st.session_state.plotted_title = chart_title
                         st.session_state.plotted_periods_info = periods_detailed_info
-                        # 暂存当前右纵轴数据来源，供 R2 存储时使用
                         st.session_state["current_pressure_col"] = actual_pressure_col
                         plt.close(fig)
                         st.success("多时段对比趋势图生成成功！")
@@ -307,10 +306,8 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                         elif not scheme_name:
                             scheme_name = "未命名时间段方案"
                         
-                        # 获取当前的右纵轴数据来源作为命名组成部分
                         p_col_current = st.session_state.get("current_pressure_col", pressure_col)
                         
-                        # 修复后的负荷标签拼接逻辑（精确适配任意输入的上下限区间）
                         if min_threshold is not None and max_threshold is not None:
                             load_tag_str = f"负荷_{format_num(min_threshold)}_{format_num(max_threshold)}"
                         elif min_threshold is not None:
@@ -321,7 +318,6 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                             load_tag_str = "负荷_全部"
 
                         time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
-                        # 文件名格式：[压差来源]_[负荷标签]_[时间戳].png
                         chart_filename = f"{p_col_current}_{load_tag_str}_{time_str}.png"
                         
                         chart_local_path = os.path.join("chart_history", chart_filename)
@@ -335,4 +331,3 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                             st.error("同步到 Cloudflare R2 失败，请检查网络或配置。")
                     except Exception as e:
                         st.error(f"保存图片时出错：{e}")
-```[cite: 11]

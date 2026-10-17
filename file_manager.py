@@ -118,11 +118,28 @@ def render_file_manager(vault_dir, file_trash_dir):
         if trashed_files:
             st.markdown("---")
             st.markdown("♻️ **文件回收站**")
+
+            if "trash_del_selections" not in st.session_state:
+                st.session_state.trash_del_selections = {}
+
             for trash_name in trashed_files:
-                tc1, tc2, tc3 = st.columns([4, 1, 1])
+                if trash_name not in st.session_state.trash_del_selections:
+                    st.session_state.trash_del_selections[trash_name] = False
+
+            # 渲染回收站文件列表及复选框
+            for trash_name in trashed_files:
+                tc1, tc2, tc3, tc4 = st.columns([0.1, 3.8, 1, 1])
                 with tc1:
-                    st.text(f"📄 {trash_name}")
+                    t_sel = st.checkbox(
+                        "回收站选择",
+                        value=st.session_state.trash_del_selections.get(trash_name, False),
+                        key=f"trash_chk_{trash_name}",
+                        label_visibility="collapsed"
+                    )
+                    st.session_state.trash_del_selections[trash_name] = t_sel
                 with tc2:
+                    st.text(f"📄 {trash_name}")
+                with tc3:
                     if st.button("♻️ 恢复", key=f"restore_file_{trash_name}", use_container_width=True):
                         src_t_path = os.path.join(file_trash_dir, trash_name)
                         dst_v_path = os.path.join(vault_dir, trash_name)
@@ -131,10 +148,11 @@ def render_file_manager(vault_dir, file_trash_dir):
                             if r2_storage._get_r2_client() is not None:
                                 r2_storage.r2_upload_file(dst_v_path)
                                 r2_storage.r2_delete_key(src_t_path.replace("\\", "/"))
-                            st.session_state.file_selections[trash_name] = True
+                            if trash_name in st.session_state.file_selections:
+                                st.session_state.file_selections[trash_name] = True
                             st.success(f"已成功恢复文件：{trash_name}")
                             st.rerun()
-                with tc3:
+                with tc4:
                     if st.button("🔥 彻底删除", key=f"perma_del_file_{trash_name}", use_container_width=True):
                         src_t_path = os.path.join(file_trash_dir, trash_name)
                         if os.path.exists(src_t_path):
@@ -143,5 +161,37 @@ def render_file_manager(vault_dir, file_trash_dir):
                                 r2_storage.r2_delete_key(src_t_path.replace("\\", "/"))
                             st.success(f"已彻底删除文件：{trash_name}")
                             st.rerun()
+
+            # 批量操作按钮
+            st.markdown("")
+            bc1, bc2 = st.columns(2)
+            with bc1:
+                if st.button("🔥 批量彻底删除选中项", use_container_width=True):
+                    perma_any = False
+                    for trash_name, is_sel in list(st.session_state.trash_del_selections.items()):
+                        if is_sel:
+                            src_t_path = os.path.join(file_trash_dir, trash_name)
+                            if os.path.exists(src_t_path):
+                                os.remove(src_t_path)
+                                if r2_storage._get_r2_client() is not None:
+                                    r2_storage.r2_delete_key(src_t_path.replace("\\", "/"))
+                                st.session_state.trash_del_selections[trash_name] = False
+                                perma_any = True
+                    if perma_any:
+                        st.success("已彻底删除选中的回收站文件！")
+                        st.rerun()
+                    else:
+                        st.warning("请先勾选需要彻底删除的回收站文件。")
+            with bc2:
+                if st.button("⚠️ 清空回收站", use_container_width=True):
+                    for trash_name in trashed_files:
+                        src_t_path = os.path.join(file_trash_dir, trash_name)
+                        if os.path.exists(src_t_path):
+                            os.remove(src_t_path)
+                            if r2_storage._get_r2_client() is not None:
+                                r2_storage.r2_delete_key(src_t_path.replace("\\", "/"))
+                    st.session_state.trash_del_selections = {}
+                    st.success("已清空回收站！")
+                    st.rerun()
 
     return active_paths

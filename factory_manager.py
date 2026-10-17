@@ -7,6 +7,26 @@ import streamlit as st
 import r2_storage
 
 
+def get_auto_discovered_factories(default_factories=None):
+  """自动扫描本地目录或持久化存储，发现所有已存在的工厂，防止刷新后丢失"""
+  if default_factories is None:
+    default_factories = ["一厂", "二厂"]
+  
+  discovered = set(default_factories)
+  
+  # 遍历当前运行目录下所有文件夹，寻找形如 uploaded_vault_XXX 的隔离目录
+  try:
+    for item in os.listdir("."):
+      if os.path.isdir(item) and item.startswith("uploaded_vault_"):
+        fac_name = item.replace("uploaded_vault_", "", 1)
+        if fac_name:
+          discovered.add(fac_name)
+  except Exception:
+    pass
+    
+  return sorted(list(discovered))
+
+
 def purge_factory_r2_data(target_factory):
   """彻底删除工厂时清理 Cloudflare R2 数据"""
   try:
@@ -64,8 +84,11 @@ def confirm_permanent_delete_dialog(target_factory):
       if typed_name.strip() == target_factory:
         purge_factory_r2_data(target_factory)
 
-        if target_factory in st.session_state["factory_trash"]:
+        if "factory_trash" in st.session_state and target_factory in st.session_state["factory_trash"]:
           st.session_state["factory_trash"].remove(target_factory)
+
+        if "all_factories" in st.session_state and target_factory in st.session_state["all_factories"]:
+          st.session_state["all_factories"].remove(target_factory)
 
         for folder_suffix in ["uploaded_vault", "file_trash", "chart_history"]:
           local_dir = f"{folder_suffix}_{target_factory}"
@@ -84,13 +107,24 @@ def render_factory_management(user_role, allowed_factories):
   """渲染侧边栏工厂工作区选择与工厂管理回收站模块"""
   st.sidebar.title("🏭 工厂工作区")
 
-  if st.session_state.get("selected_factory_val") not in st.session_state[
-      "all_factories"
-  ]:
+  # 确保 session_state 中初始化了 all_factories，并通过自动扫描防丢失
+  if "all_factories" not in st.session_state:
+    st.session_state["all_factories"] = get_auto_discovered_factories(["一厂", "二厂"])
+  else:
+    # 每次渲染时同步盘活自动发现的工厂，防止刷新丢失
+    discovered = get_auto_discovered_factories(st.session_state["all_factories"])
+    for fac in discovered:
+      if fac not in st.session_state["all_factories"] and (
+          "factory_trash" not in st.session_state or fac not in st.session_state["factory_trash"]
+      ):
+        st.session_state["all_factories"].append(fac)
+
+  if "factory_trash" not in st.session_state:
+    st.session_state["factory_trash"] = []
+
+  if st.session_state.get("selected_factory_val") not in st.session_state["all_factories"]:
     if st.session_state["all_factories"]:
-      st.session_state["selected_factory_val"] = st.session_state[
-          "all_factories"
-      ][0]
+      st.session_state["selected_factory_val"] = st.session_state["all_factories"][0]
 
   if user_role == "admin" or allowed_factories == "ALL":
     selected_factory = st.sidebar.selectbox(
@@ -136,6 +170,11 @@ def render_factory_management(user_role, allowed_factories):
           st.warning("该工厂已存在或已在回收站中！")
         else:
           st.session_state["all_factories"].append(new_fac_name)
+          
+          # 预先创建该工厂对应的本地文件夹，确保下次刷新能被自动扫描发现
+          os.makedirs(f"uploaded_vault_{new_fac_name}", exist_ok=True)
+          os.makedirs(f"file_trash_{new_fac_name}", exist_ok=True)
+          
           st.success(f"已成功添加工厂：{new_fac_name}")
           st.rerun()
 

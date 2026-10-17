@@ -62,7 +62,7 @@ def render_column_and_filter_config(columns):
 
     with col1:
         time_col = st.selectbox("横坐标轴（时间列）请选择数据来源", columns, index=0)
-        time_custom_label = st.text_input("横轴自定义名称（留空则默认取数据来源）", value="")
+        time_custom_label = st.text_input("横轴自定义名称（留空则默认取字段名）", value="")
 
     with col2:
         load_col = st.selectbox("左纵轴（机组负荷）请选择数据来源", columns, index=default_load_index)
@@ -72,7 +72,7 @@ def render_column_and_filter_config(columns):
         pressure_col = st.selectbox("右纵轴（压差）请选择数据来源", columns, index=min(2, len(columns) - 1))
         pressure_custom_label = st.text_input("右纵轴自定义名称（留空则默认取“压差”）", value="")
 
-    # 处理坐标轴最终显示名称逻辑
+    # 动态计算最终坐标轴显示名称：若未输入自定义名称，则默认使用字段名或标准组合
     final_time_label = time_custom_label.strip() if time_custom_label.strip() else time_col
     
     raw_load_label = load_custom_label.strip() if load_custom_label.strip() else "机组负荷"

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""工厂动态管理与回收站独立模块（严格与 Cloudflare R2 云端时刻同步版本）"""
+"""工厂动态管理与回收站独立模块（严格以 Cloudflare R2 云端为唯一准绳）"""
 
 import os
 import shutil
@@ -8,28 +8,37 @@ import r2_storage
 
 
 def fetch_factories_from_r2():
-  """实时从 Cloudflare R2 云端扫描并获取所有真实的工厂列表，确保与云端时刻同步"""
-  factories = set(["shanxihg"])  # 系统保底默认最少有一个
+  """绝对以 R2 云端扫描结果为准，实时同步工厂列表，杜绝任何本地缓存滞后"""
+  factories = set(["shanxihg"])  # 默认保底工厂
   
   try:
     r2_client = r2_storage._get_r2_client()
     bucket_name = getattr(r2_storage, "R2_BUCKET_NAME", None)
     
     if r2_client is not None and bucket_name:
-      # 列出 device-monitor/ 下的所有子目录
+      # 1. 扫描 CommonPrefixes 目录
       response = r2_client.list_objects_v2(
           Bucket=bucket_name, Prefix="device-monitor/", Delimiter="/"
       )
       if "CommonPrefixes" in response:
         for p in response["CommonPrefixes"]:
-          # 路径格式为 device-monitor/工厂名/
           parts = p["Prefix"].strip("/").split("/")
           if len(parts) >= 2:
             fac_name = parts[1]
             if fac_name:
               factories.add(fac_name)
+              
+      # 2. 深度扫描 Contents 键名，确保刚添加带文件的工厂能立刻被 R2 抓取
+      paginator = r2_client.get_paginator("list_objects_v2")
+      for page in paginator.paginate(Bucket=bucket_name, Prefix="device-monitor/"):
+        for obj in page.get("Contents", []):
+          key_parts = obj["Key"].split("/")
+          if len(key_parts) >= 3:
+            fac_name = key_parts[1]
+            if fac_name:
+              factories.add(fac_name)
   except Exception as e:
-    print(f"从 R2 同步工厂列表提示: {e}")
+    print(f"实时同步 R2 工厂列表失败: {e}")
 
   # 过滤掉处于回收站中的工厂
   trash_list = st.session_state.get("factory_trash", [])
@@ -118,7 +127,7 @@ def render_factory_management(user_role, allowed_factories):
   if "factory_trash" not in st.session_state:
     st.session_state["factory_trash"] = []
 
-  # 核心：每次页面渲染/刷新时，直接向 R2 云端拉取最新真实的工厂列表
+  # 核心：每一次页面刷新或运行，强制直接从 R2 云端拉取最新工厂列表作为唯一标准
   current_all_factories = fetch_factories_from_r2()
   st.session_state["all_factories"] = current_all_factories
 
@@ -155,7 +164,7 @@ def render_factory_management(user_role, allowed_factories):
     with st.sidebar.expander("⚙️ 工厂管理与回收站"):
       st.markdown("#### ➕ 增加新工厂")
       new_fac_name = st.text_input(
-          "新工厂名称", placeholder="例如：三厂", key="add_fac_input"
+          "新工厂名称", placeholder="例如：广西百矿三厂", key="add_fac_input"
       )
       if st.button(
           "确认添加工厂", key="btn_add_fac", use_container_width=True
@@ -169,7 +178,7 @@ def render_factory_management(user_role, allowed_factories):
         ):
           st.warning("该工厂已存在或已在回收站中！")
         else:
-          # 新增工厂时，在本地和 R2 预创建对应隔离目录，确保 R2 云端能立刻捕捉到它
+          # 在本地创建文件夹，并通过 R2 同步上传占位文件，强制在云端 R2 生成该文件夹对象
           vault_d = f"uploaded_vault_{new_fac_name}"
           trash_d = f"file_trash_{new_fac_name}"
           chart_d = f"chart_history_{new_fac_name}"
@@ -177,16 +186,14 @@ def render_factory_management(user_role, allowed_factories):
           os.makedirs(trash_d, exist_ok=True)
           os.makedirs(chart_d, exist_ok=True)
           
-          # 如果 R2 连通，上传一个占位符或触发同步，使 R2 产生该文件夹
           if r2_storage._get_r2_client() is not None:
             r2_storage.BASE_PREFIX = f"device-monitor/{new_fac_name}/"
-            # 可以在本地放个空文件同步上去让 R2 识别
             dummy_file = os.path.join(vault_d, ".keep")
             with open(dummy_file, "w") as f:
               f.write("init")
             r2_storage.r2_upload_file(dummy_file)
 
-          st.success(f"已成功添加工厂：{new_fac_name} 并同步至 R2！")
+          st.success(f"已成功添加工厂：{new_fac_name} 并强制同步至 R2 云端！")
           st.rerun()
 
       st.markdown("---")

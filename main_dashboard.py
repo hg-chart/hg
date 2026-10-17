@@ -25,7 +25,6 @@ st.set_page_config(
     layout="wide",
 )
 
-# 强制隐藏右上角工具栏及 Streamlit 页脚
 st.markdown(
     """
     <style>
@@ -77,10 +76,7 @@ if selected_font:
     matplotlib.rcParams["font.sans-serif"] = [selected_font, "DejaVu Sans"]
     logging.warning("Matplotlib 中文字体：%s", selected_font)
 else:
-    logging.error(
-        "没有检测到中文字体。请检查根目录 packages.txt 是否包含 "
-        "fonts-wqy-zenhei、fonts-wqy-microhei、fontconfig，并查看部署日志。"
-    )
+    logging.error("没有检测到中文字体。")
 
 st.title("📊 设备运行数据多文件多时段汇总对比分析系统")
 st.markdown("---")
@@ -112,31 +108,34 @@ else:
 # 模块串联与执行流
 # ============================================================
 
-# 模块二：表格文件管理与选择，返回当前选中的文件路径
 active_paths = file_manager.render_file_manager(VAULT_DIR, FILE_TRASH_DIR)
 
 if not active_paths:
     st.info("请先上传或选择 CSV、Excel 数据文件。")
     st.stop()
 
-# 模块三（前半部分）：读取并清洗数据
 df_raw, columns = data_processor.load_and_process_data(active_paths)
 
 if not columns:
     st.error("所选文件没有可用的数据列。")
     st.stop()
 
-# 模块三（后半部分）：数据列、自定义坐标轴命名与负荷区间过滤配置
-time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid, final_time_label, final_load_label, final_pressure_label = data_processor.render_column_and_filter_config(columns)
+# 接收 11 个返回值以匹配 data_processor 的最新输出
+(
+    time_col, load_col, pressure_col, 
+    min_threshold, max_threshold, filter_valid, 
+    final_time_label, final_load_label, final_pressure_label,
+    filter_target_col, filter_metric_name
+) = data_processor.render_column_and_filter_config(columns)
 
-# 模块四：运行时间段方案管理
 time_intervals_manager.render_time_intervals_manager(VAULT_DIR, df_raw, time_col)
 
-# 模块五：图表绘制、预览与下载
+# 传入图表生成模块
 chart_generator.render_chart_generator(
-    df_raw, time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid,
-    final_time_label, final_load_label, final_pressure_label
+    df_raw, time_col, load_col, pressure_col, 
+    min_threshold, max_threshold, filter_valid, 
+    final_time_label, final_load_label, final_pressure_label,
+    filter_target_col, filter_metric_name
 )
 
-# 模块六：云端历史图表检索、查看及回收站管理
 cloud_chart_manager.render_cloud_chart_manager(CHART_HISTORY_DIR, CHART_TRASH_DIR)

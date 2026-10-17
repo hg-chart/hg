@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""模块五：图表绘制与预览"""
+"""模块五：图表绘制与预览（带详细列检索诊断提示）"""
 import io
 import os
 from datetime import datetime
@@ -8,11 +8,6 @@ from matplotlib import ticker
 import pandas as pd
 import streamlit as st
 import r2_storage
-
-COLUMN_ALIASES = {
-    "压差": "W3.FW.AHTE10CP201F",
-    "负荷": "W3.UNIT1.10DEHDCSAI03",
-}
 
 def format_num(val):
     """辅助函数：如果是整数则不带小数点，保持输入原貌"""
@@ -28,7 +23,7 @@ def render_chart_generator(
     final_time_label="时间", final_load_label="机组负荷", final_pressure_label="压差",
     filter_target_col=None, filter_metric_name="机组负荷"
 ):
-    """渲染生成趋势图的触发按钮及预览界面（支持完全动态的过滤变量、坐标轴与区间命名）"""
+    """渲染生成趋势图的触发按钮及预览界面（带强力诊断提示）"""
     if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
         if not filter_valid:
             st.error("请先修正过滤条件的输入错误。")
@@ -42,36 +37,45 @@ def render_chart_generator(
                 fig = None
                 try:
                     df = df_raw.copy()
-                    rename_map = {
-                        col: COLUMN_ALIASES[col]
-                        for col in df.columns
-                        if col in COLUMN_ALIASES
-                    }
-                    df = df.rename(columns=COLUMN_ALIASES)
-                    actual_time_col = rename_map.get(time_col, time_col)
-                    actual_load_col = rename_map.get(load_col, load_col)
-                    actual_pressure_col = rename_map.get(pressure_col, pressure_col)
-                    actual_filter_col = rename_map.get(filter_target_col, filter_target_col) if filter_target_col else actual_load_col
+                    
+                    actual_time_col = time_col
+                    actual_load_col = load_col
+                    actual_pressure_col = pressure_col
+                    actual_filter_col = filter_target_col if filter_target_col else load_col
+
+                    # 1. 打印详细的列检索诊断，让用户一眼看清程序用的是哪几列
+                    st.info(
+                        f"📊 **【取数与列诊断】**\n\n"
+                        f"- 横坐标列 (`actual_time_col`)：`{actual_time_col}`\n"
+                        f"- 左纵轴列 (`actual_load_col`)：`{actual_load_col}`\n"
+                        f"- 右纵轴列 (`actual_pressure_col`)：`{actual_pressure_col}`\n"
+                        f"- 过滤目标列 (`actual_filter_col`)：`{actual_filter_col}`"
+                    )
 
                     required = [actual_time_col, actual_load_col, actual_pressure_col, actual_filter_col]
                     missing = [col for col in required if col not in df.columns]
                     if missing:
                         raise KeyError("找不到所选数据列：" + "、".join(missing))
 
+                    # 确保时间列为 datetime 格式
                     df[actual_time_col] = pd.to_datetime(
-                        df[actual_time_col].astype(str).str.strip(),
-                        format="mixed",
+                        df[actual_time_col],
                         errors="coerce",
                     )
+                    
                     df[actual_load_col] = pd.to_numeric(df[actual_load_col], errors="coerce")
                     df[actual_pressure_col] = pd.to_numeric(df[actual_pressure_col], errors="coerce")
                     df[actual_filter_col] = pd.to_numeric(df[actual_filter_col], errors="coerce")
                     
+                    # 剔除无效行前的数量记录
+                    total_rows_before = len(df)
                     df = df.dropna(subset=[actual_time_col, actual_load_col, actual_filter_col])
+                    valid_rows_after_dropna = len(df)
+                    
                     df = df.sort_values(actual_time_col).reset_index(drop=True)
                     df = df[df[actual_filter_col] != 0].copy()
 
-                    # 动态过滤逻辑（基于用户选中的过滤目标列）
+                    # 动态过滤逻辑
                     if min_threshold is not None and max_threshold is not None:
                         df = df[(df[actual_filter_col] >= min_threshold) & (df[actual_filter_col] <= max_threshold)].copy()
                     elif min_threshold is not None:
@@ -97,7 +101,6 @@ def render_chart_generator(
                     load_short_name = final_load_label.split("（")[0] if "（" in final_load_label else final_load_label
                     pressure_short_name = final_pressure_label.split("（")[0] if "（" in final_pressure_label else final_pressure_label
 
-                    # 格式化过滤条件文本
                     if min_threshold is not None and max_threshold is not None:
                         cond_str_clean = f"{format_num(min_threshold)}-{format_num(max_threshold)}"
                     elif min_threshold is not None:
@@ -153,10 +156,10 @@ def render_chart_generator(
                             "color": fill_color
                         })
 
-                    st.info("🔍 各时段数据检索诊断：" + " | ".join(diagnostics))
+                    st.info("🔍 各时段数据检索诊断：" + " | ".join(diagnostics) + f" (原始总行数: {total_rows_before}, 清洗后有效行: {valid_rows_after_dropna})")
 
                     if not plotted_periods:
-                        st.warning("指定时间段和过滤条件下均未检索到有效数据。")
+                        st.warning("指定时间段和过滤条件下均未检索到有效数据。请检查上方【取数与列诊断】中指定的列名是否与您表格中的实际物理列名完全相符。")
                         st.session_state.plotted_fig_bytes = None
                         st.session_state.plotted_title = ""
                         st.session_state.plotted_periods_info = []
@@ -238,7 +241,6 @@ def render_chart_generator(
                             frameon=True,
                         )
 
-                        # 图表顶部标题：动态变量 + 区间（如：电流/压差对比趋势图（电流区间：245-250））
                         chart_title = f"{load_short_name}/{pressure_short_name}对比趋势图（{filter_metric_name}区间：{cond_str_clean}）"
                         plt.title(chart_title, fontsize=14, pad=20)
 
@@ -258,7 +260,6 @@ def render_chart_generator(
                         plt.close(fig)
                     st.error(f"绘图过程中发生错误：{e}")
 
-    # 渲染预览与下载区域
     if st.session_state.get("plotted_fig_bytes"):
         st.markdown("---")
         st.subheader("📊 生成的对比趋势图预览")
@@ -278,7 +279,6 @@ def render_chart_generator(
             else:
                 current_threshold_str = f"全部{active_metric}"
 
-            # 预览上方小标题：动态变量 + 区间
             st.markdown(f"📋 **各时段详细起止与配置说明（{active_metric}区间 {cond_str_clean if 'cond_str_clean' in locals() else ''}）**", unsafe_allow_html=True)
             
             st.markdown(

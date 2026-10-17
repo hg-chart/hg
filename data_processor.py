@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""模块三：数据读取与清洗过滤"""
+"""模块三：数据读取与清洗过滤（支持多层复合表头智能展平与日期时间合并）"""
 import json
 import os
 from pathlib import Path
@@ -32,8 +32,78 @@ def _save_all_axis_configs(configs):
         pass
 
 
+def _flatten_multiindex_headers(df):
+    """
+    智能化清洗工厂多层复合表头：
+    1. 自动前向填充合并单元格（如跨行的日期）
+    2. 将多层级表头扁平化展平（如：1# + 斗提机电流(A) -> 1#斗提机电流(A)）
+    3. 自动合并“日期”与“时间”列为标准的“时间”列，并剔除“班别”
+    """
+    # 如果是多层表头（MultiIndex）
+    if isinstance(df.columns, pd.MultiIndex):
+        # 1. 尝试前向填充合并单元格产生的 NaN（主要针对日期列）
+        df = df.ffill()
+
+        new_cols = []
+        for col in df.columns:
+            # 过滤掉 Unnamed 或空白的层级名称
+            parts = [str(c).strip() for c in col if c is not None and "Unnamed" not in str(c) and str(c).strip() != "nan"]
+            
+            if not parts:
+                new_cols.append("未知列")
+                continue
+
+            # 匹配常规字段
+            combined_name = "".join(parts)
+            if "日期" in combined_name:
+                new_cols.append("日期")
+            elif "时间" in combined_name:
+                new_cols.append("时间")
+            elif "班别" in combined_name:
+                new_cols.append("班别")
+            else:
+                # 针对多级指标（例如主表头：斗提机电流，子表头：1#）
+                # 通常最后一层或最底层是设备编号（1#, 2#），将其拼在前面或中间更直观
+                if len(parts) >= 2:
+                    sub_tag = parts[-1]   # 如 1#
+                    main_name = parts[0]  # 如 斗提机电流(A)
+                    # 如果 sub_tag 看起来像编号，组合为 "1#斗提机电流(A)"
+                    if "#" in sub_tag or "#号" in sub_tag or len(sub_tag) <= 4:
+                        new_cols.append(f"{sub_tag}{main_name}")
+                    else:
+                        new_cols.append("_".join(parts))
+                else:
+                    new_cols.append(parts[0])
+        
+        df.columns = new_cols
+
+    # 2. 如果常规单层表头带有一点中文字段清理
+    df.columns = df.columns.astype(str).str.strip().str.lstrip("\ufeff")
+
+    # 3. 如果表头中同时存在“日期”与“时间”，执行自动合并，并丢弃“班别”
+    if "日期" in df.columns and "时间" in df.columns:
+        # 向下填充日期（防止合并单元格导致后续行为空）
+        df["日期"] = df["日期"].ffill()
+        # 拼接日期与时间
+        try:
+            df["时间"] = pd.to_datetime(
+                df["日期"].astype(str).str.strip() + " " + df["时间"].astype(str).str.strip(),
+                errors="coerce"
+            )
+        except Exception:
+            pass
+        # 删除原有的“日期”列
+        df = df.drop(columns=["日期"], errors="ignore")
+
+    # 4. 自动剔除不需要的“班别”列
+    if "班别" in df.columns:
+        df = df.drop(columns=["班别"], errors="ignore")
+
+    return df
+
+
 def load_and_process_data(active_paths):
-    """读取并合并 CSV / Excel 文件，返回原始 DataFrame 与列名列表"""
+    """读取并智能清洗合并 CSV / Excel 文件，返回原始 DataFrame 与扁平化后的列名列表"""
     try:
         dataframes = []
 
@@ -43,29 +113,33 @@ def load_and_process_data(active_paths):
                 read_errors = []
                 for encoding in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
                     try:
-                        df = pd.read_csv(file_path, encoding=encoding)
+                        # 兼容可能带有 2-3 行复合表头的 CSV，尝试读取
+                        df = pd.read_csv(file_path, encoding=encoding, header=[0, 1] if "csv" in file_path else 0)
                         break
-                    except (UnicodeDecodeError, pd.errors.ParserError) as exc:
+                    except Exception as exc:
                         read_errors.append(f"{encoding}: {exc}")
+                
+                # 如果多层表头读取失败，退回到普通单行表头读取
                 if df is None:
-                    raise ValueError(
-                        f"无法读取 CSV 文件 {Path(file_path).name}。"
-                        + "；".join(read_errors)
-                    )
+                    try:
+                        df = pd.read_csv(file_path, encoding="utf-8-sig")
+                    except Exception as e:
+                        raise ValueError(f"无法读取 CSV 文件 {Path(file_path).name}。错误：{e}")
             else:
-                with pd.ExcelFile(file_path) as excel:
-                    sheet_names = excel.sheet_names
-                sheet_frames = [
-                    pd.read_excel(file_path, sheet_name=sheet)
-                    for sheet in sheet_names
-                ]
-                df = pd.concat(sheet_frames, ignore_index=True) if sheet_frames else pd.DataFrame()
+                # Excel 读取：自动适配多级表头（假设表头占用前 2 行，如果只有1行会自动识别）
+                try:
+                    df = pd.read_excel(file_path, header=[0, 1])
+                except Exception:
+                    df = pd.read_excel(file_path, header=0)
 
-            df.columns = df.columns.astype(str).str.strip().str.lstrip("\ufeff")
+            # 调用智能清洗函数，展平表头、合并时间、剔除班别
+            df = _flatten_multiindex_headers(df)
             dataframes.append(df)
 
         df_raw = pd.concat(dataframes, ignore_index=True, sort=False)
-        columns = [str(c).strip() for c in df_raw.columns if str(c).strip()]
+        
+        # 清理列名空白字符
+        columns = [str(c).strip() for c in df_raw.columns if str(c).strip() and "Unnamed" not in str(c)]
         return df_raw, columns
 
     except Exception as exc:
@@ -91,7 +165,7 @@ def render_column_and_filter_config(columns):
 
     st.subheader("2. 数据列选择与坐标轴命名配置")
 
-    # 1. 红色框部分：坐标轴自定义名称（放在最上面）
+    # 1. 坐标轴自定义名称配置区
     if st.session_state[config_state_key] and has_persisted_config:
         info_col1, info_col2, info_col3, btn_col = st.columns([2, 2, 2, 1])
         with info_col1:
@@ -120,7 +194,6 @@ def render_column_and_filter_config(columns):
         with col3_top:
             pressure_custom_label = st.text_input("右纵轴自定义名称", value=factory_cfg.get("pressure_custom", ""), placeholder="留空则默认取字段名")
 
-        # 按钮放在红色框下方、蓝色框上面
         if st.button("💾 保存并锁定坐标轴名称配置", key=f"btn_save_axis_{current_factory}", type="primary"):
             all_configs[current_factory] = {
                 "time_custom": time_custom_label,
@@ -134,15 +207,16 @@ def render_column_and_filter_config(columns):
 
     st.markdown("---")
 
-    # 动态计算标签名，确保蓝色框中的提示文字能够完全跟随绿色椭圆框的输入变量变化
     current_time_var = time_custom_label.strip() if time_custom_label.strip() else "时间列"
     current_load_var = load_custom_label.strip() if load_custom_label.strip() else "左纵轴"
     current_pressure_var = pressure_custom_label.strip() if pressure_custom_label.strip() else "右纵轴"
 
-    # 2. 蓝色框部分：数据来源选择下拉框（提示词动态绑定变量）
+    # 2. 数据来源选择下拉框
     default_load_index = min(1, len(columns) - 1)
-    if "W3.UNIT1.10DEHDCSAI03" in columns:
-        default_load_index = columns.index("W3.UNIT1.10DEHDCSAI03")
+    for idx, col in enumerate(columns):
+        if "1#斗提机电流" in col or "W3.UNIT1.10DEHDCSAI03" in col:
+            default_load_index = idx
+            break
 
     col1_bot, col2_bot, col3_bot = st.columns(3)
     with col1_bot:
@@ -152,7 +226,6 @@ def render_column_and_filter_config(columns):
     with col3_bot:
         pressure_col = st.selectbox(f"右纵轴（{current_pressure_var}）请选择数据来源", columns, index=min(2, len(columns) - 1))
 
-    # 动态计算最终显示名称
     final_time_label = time_custom_label.strip() if time_custom_label.strip() else time_col
     
     raw_load_label = load_custom_label.strip() if load_custom_label.strip() else load_col
@@ -161,7 +234,7 @@ def render_column_and_filter_config(columns):
     raw_pressure_label = pressure_custom_label.strip() if pressure_custom_label.strip() else pressure_col
     final_pressure_label = f"{raw_pressure_label}（{pressure_col}）"
 
-    # 第三部分：交互式选择要过滤的目标变量
+    # 3. 交互式选择要过滤的目标变量
     st.subheader("3. 数据过滤配置（可选：支持单值下限或闭区间）")
     
     available_filter_metrics = [raw_load_label, raw_pressure_label]

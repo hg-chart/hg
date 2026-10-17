@@ -126,16 +126,30 @@ if not columns:
     st.error("所选文件没有可用的数据列。")
     st.stop()
 
-# 模块三（后半部分）：数据列和负荷区间过滤配置（接收 6 个返回值）
-time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid = data_processor.render_column_and_filter_config(columns)
+# 模块三（后半部分）：数据列选择、坐标轴自定义命名和负荷区间过滤配置（接收 9 个返回值）
+(
+    time_col,
+    load_col,
+    pressure_col,
+    min_threshold,
+    max_threshold,
+    filter_valid,
+    final_time_label,
+    final_load_label,
+    final_pressure_label,
+) = data_processor.render_column_and_filter_config(columns)
 
 # 模块四：运行时间段方案管理
 time_intervals_manager.render_time_intervals_manager(VAULT_DIR, df_raw, time_col)
 
-# 模块五：图表绘制、预览与下载（传入区间上下限及校验状态）
+# 模块五：图表绘制、预览与下载（传入自定义坐标轴标签、区间上下限及校验状态）
 chart_generator.render_chart_generator(
-    df_raw, time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid
+    df_raw, time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid,
+    final_time_label, final_load_label, final_pressure_label
 )
 
 # 模块六：云端历史图表检索、查看及回收站管理
 cloud_chart_manager.render_cloud_chart_manager(CHART_HISTORY_DIR, CHART_TRASH_DIR)
+```[cite: 11]
+
+只要您把 **`data_processor.py`**、**`chart_generator.py`** 和上面的 **`main_dashboard.py`** 全部更新为最新版本，页面上就会完美展现出自定义坐标轴命名的输入框，并且图表坐标轴会严格按照您的输入或默认规则进行渲染！

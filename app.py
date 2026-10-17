@@ -1,3 +1,228 @@
+# -*- coding: utf-8 -*-
+"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（支持用户数据持久化、彻底防刷新掉线与正常退出登录）"""
+
+import inspect
+import os
+import runpy
+import shutil
+import streamlit as st
+import streamlit_authenticator as stauth
+
+import factory_manager
+import r2_storage
+import user_manager
+
+# ============================================================
+# 0. 页面外观与基础配置
+# ============================================================
+st.set_page_config(
+    page_title="设备运行数据分析系统",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+st.markdown(
+    """
+    <style>
+    div[data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
+    footer { visibility: hidden !important; }
+
+    .main .block-container,
+    [data-testid="stMainBlockContainer"],
+    div.block-container {
+        max-width: 100% !important;
+        width: 100% !important;
+        padding-left: 0.8rem !important;
+        padding-right: 0.5rem !important;
+        padding-top: 1.5rem !important;
+        padding-bottom: 40vh !important;
+    }
+    [data-testid="stMain"],
+    [data-testid="stAppViewContainer"] {
+        padding-right: 0 !important;
+    }
+
+    @media (min-width: 769px) {
+        section[data-testid="stSidebar"] {
+            display: block !important;
+            visibility: visible !important;
+            transform: none !important;
+            width: 320px !important;
+            min-width: 320px !important;
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            height: 100vh !important;
+            z-index: 999999 !important;
+        }
+        .main .block-container,
+        [data-testid="stMainBlockContainer"],
+        div.block-container {
+            padding-left: 335px !important;
+        }
+    }
+
+    @media (max-width: 768px) {
+        body section[data-testid="stSidebar"] {
+            display: block !important;
+            visibility: visible !important;
+            transform: none !important;
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 82vw !important;
+            max-width: 300px !important;
+            min-width: 0 !important;
+            height: 100vh !important;
+            z-index: 999999 !important;
+            background-color: var(--secondary-background-color, #f8f9fa) !important;
+            box-shadow: 8px 0 24px rgba(0, 0, 0, 0.3) !important;
+        }
+        [data-testid="stSidebarCollapseButton"] { display: none !important; }
+    }
+
+    [data-testid="stImage"], [data-testid="stImage"] img {
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ============================================================
+# 1. 全局数据源初始化
+# ============================================================
+if "user_db" not in st.session_state:
+  st.session_state["user_db"] = user_manager.load_user_db()
+
+if "all_factories" not in st.session_state:
+  if hasattr(factory_manager, "load_factory_list"):
+    st.session_state["all_factories"] = factory_manager.load_factory_list()
+  else:
+    collected_factories = set()
+    users_dict = st.session_state["user_db"].get("credentials", {}).get("usernames", {})
+    for u_data in users_dict.values():
+      factories = u_data.get("allowed_factories", [])
+      if isinstance(factories, list):
+        collected_factories.update(factories)
+    
+    if collected_factories:
+      st.session_state["all_factories"] = list(collected_factories)
+    else:
+      st.session_state["all_factories"] = [
+          "shanxihg",
+          "太原分厂",
+          "华东一厂",
+          "华东二厂",
+      ]
+
+if "factory_trash" not in st.session_state:
+  st.session_state["factory_trash"] = []
+
+# ============================================================
+# 2. 用户登录认证（使用 authenticator 自身的 Cookie 持久化）
+# ============================================================
+authenticator = stauth.Authenticate(
+    st.session_state["user_db"]["credentials"],
+    st.session_state["user_db"]["cookie"]["name"],
+    st.session_state["user_db"]["cookie"]["key"],
+    st.session_state["user_db"]["cookie"]["expiry_days"],
+    auto_hash=True,
+)
+
+# 重要：
+# 不再通过 URL 中的 auth_status / logged_username 恢复登录。
+# 仅凭 URL 参数就把 authentication_status 设为 True，既会干扰退出登录，
+# 也可能让知道用户名的人伪造登录状态。刷新后保持登录应交给 authenticator 的 Cookie。
+# 清除旧版本遗留的参数，但绝不根据这些参数授予登录状态。
+try:
+    old_auth_status = st.query_params.get("auth_status")
+    old_logged_username = st.query_params.get("logged_username")
+    if old_auth_status is not None or old_logged_username is not None:
+        st.query_params.pop("auth_status", None)
+        st.query_params.pop("logged_username", None)
+except Exception:
+    # 不同 Streamlit 版本的 query_params 行为可能略有差异；
+    # URL 参数清理失败不应阻止正常登录流程。
+    pass
+
+# 如果认证组件已经明确将状态置为 False，视为未登录。
+# 不在这里重新设置 authentication_status=True，也不再依赖 URL 参数恢复状态。
+if st.session_state.get("authentication_status") is False:
+    st.session_state.pop("username", None)
+    st.session_state.pop("name", None)
+    is_logged_in = False
+else:
+    is_logged_in = (
+        st.session_state.get("authentication_status") is True
+        and bool(st.session_state.get("username"))
+    )
+
+if not is_logged_in:
+    # 未登录状态：渲染登录界面。兼容不同版本的 streamlit-authenticator。
+    login_parameters = inspect.signature(authenticator.login).parameters
+    if "form_name" in login_parameters:
+        login_result = authenticator.login("请登录设备运行数据分析系统", "main")
+    elif "location" in login_parameters:
+        login_result = authenticator.login(location="main")
+    else:
+        login_result = authenticator.login()
+
+    if isinstance(login_result, (tuple, list)) and len(login_result) == 3:
+        name, authentication_status, username = login_result
+    else:
+        name = st.session_state.get("name")
+        authentication_status = st.session_state.get("authentication_status")
+        username = st.session_state.get("username")
+
+    if authentication_status is True and username:
+        st.session_state["authentication_status"] = True
+        st.session_state["username"] = username
+        st.session_state["name"] = name
+        # 不写入 URL 登录标记。Cookie 由 authenticator 自己管理。
+        st.rerun()
+    elif authentication_status is False:
+        st.error("❌ 用户名或密码错误")
+        st.stop()
+    else:
+        st.info("👉 请输入您的登录凭据以访问系统")
+        st.stop()
+else:
+    username = st.session_state.get("username")
+    authentication_status = True
+
+# 再检查账号是否仍存在，防止已删除账号继续访问。
+if username not in st.session_state["user_db"]["credentials"]["usernames"]:
+    st.error("登录账号不存在或权限不足，请重新登录。")
+    for key in ("authentication_status", "username", "name"):
+        st.session_state.pop(key, None)
+    try:
+        st.query_params.clear()
+    except Exception:
+        pass
+    st.rerun()
+
+# ============================================================
+# 3. 模块化调用侧边栏管理组件与显隐状态控制
+# ============================================================
+current_user = st.session_state["user_db"]["credentials"]["usernames"][username]
+user_role = current_user.get("role", "user")
+allowed_factories = current_user.get("allowed_factories", [])
+
+if "sidebar_visible" not in st.session_state:
+  try:
+    _ua = st.context.headers.get("User-Agent", "")
+  except Exception:
+    _ua = ""
+  _is_mobile = any(k in _ua for k in ("Mobile", "Android", "iPhone", "iPad"))
+  st.session_state["sidebar_visible"] = not _is_mobile
+
+
+def _set_sidebar_visible(flag):
+  st.session_state["sidebar_visible"] = flag
+
+
 if st.session_state["sidebar_visible"]:
   st.markdown(
       """
@@ -125,3 +350,8 @@ def safe_set_page_config(*args, **kwargs):
 
 
 st.set_page_config = safe_set_page_config
+
+try:
+  runpy.run_path("main_dashboard.py", run_name="__main__")
+finally:
+  st.set_page_config = original_set_page_config

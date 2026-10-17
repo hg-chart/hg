@@ -27,7 +27,6 @@ st.markdown(
     div[data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
     footer { visibility: hidden !important; }
 
-    /* 通用：主内容区左右留白压到最小，并在底部增加 40vh 留白，防止底部下拉菜单向上反弹 */
     .main .block-container,
     [data-testid="stMainBlockContainer"],
     div.block-container {
@@ -43,7 +42,6 @@ st.markdown(
         padding-right: 0 !important;
     }
 
-    /* 电脑端（宽度>768px）：侧边栏固定显示在左侧 */
     @media (min-width: 769px) {
         section[data-testid="stSidebar"] {
             display: block !important;
@@ -60,11 +58,10 @@ st.markdown(
         .main .block-container,
         [data-testid="stMainBlockContainer"],
         div.block-container {
-            padding-left: 335px !important; /* 侧边栏 320px + 15px 间隙 */
+            padding-left: 335px !important;
         }
     }
 
-    /* 手机端/窄屏适配（宽度<=768px）：侧边栏作为独立抽屉浮层，带背景色防重叠 */
     @media (max-width: 768px) {
         body section[data-testid="stSidebar"] {
             display: block !important;
@@ -84,7 +81,6 @@ st.markdown(
         [data-testid="stSidebarCollapseButton"] { display: none !important; }
     }
 
-    /* 图片撑满可用宽度 */
     [data-testid="stImage"], [data-testid="stImage"] img {
         width: 100% !important;
         max-width: 100% !important;
@@ -135,7 +131,6 @@ authenticator = stauth.Authenticate(
     auto_hash=True,
 )
 
-# 核心防掉线增强逻辑：优先检查 URL 参数恢复状态
 if "auth_status" in st.query_params and st.query_params["auth_status"] == "success":
   if "logged_username" in st.query_params:
     q_user = st.query_params["logged_username"]
@@ -145,13 +140,11 @@ if "auth_status" in st.query_params and st.query_params["auth_status"] == "succe
       if "name" not in st.session_state:
         st.session_state["name"] = st.session_state["user_db"]["credentials"]["usernames"][q_user].get("name", q_user)
 
-# 执行认证检查
 is_logged_in = False
 if st.session_state.get("authentication_status") is True and st.session_state.get("username"):
   is_logged_in = True
 
 if not is_logged_in:
-  # 未登录状态：渲染登录界面
   login_parameters = inspect.signature(authenticator.login).parameters
   if "form_name" in login_parameters:
     login_result = authenticator.login("请登录设备运行数据分析系统", "main")
@@ -171,7 +164,6 @@ if not is_logged_in:
     st.session_state["authentication_status"] = True
     st.session_state["username"] = username
     st.session_state["name"] = name
-    # 写入防刷新 URL 标识
     st.query_params["auth_status"] = "success"
     st.query_params["logged_username"] = str(username)
     st.rerun()
@@ -275,13 +267,14 @@ else:
       args=(True,),
   )
 
-# 模块一：用户与密码管理模块
 user_manager.render_user_management(username, user_role, authenticator)
 
 # 模块二：工厂选择与增删回收站模块
 selected_factory = factory_manager.render_factory_management(
     user_role, allowed_factories
 )
+# 🔴 核心修复：确保选中的工厂同步到 session_state 中供子模块读取
+st.session_state["selected_factory"] = selected_factory
 
 # ============================================================
 # 4. R2 存储与工厂隔离桥接

@@ -51,8 +51,9 @@ def load_and_process_data(active_paths):
 
 
 def render_column_and_filter_config(columns):
-    """渲染数据列选择和负荷区间过滤配置"""
-    st.subheader("2. 数据列选择配置")
+    """渲染数据列选择、坐标轴自定义命名和负荷区间过滤配置"""
+    st.subheader("2. 数据列选择与坐标轴命名配置")
+    
     col1, col2, col3 = st.columns(3)
 
     default_load_index = min(1, len(columns) - 1)
@@ -61,10 +62,24 @@ def render_column_and_filter_config(columns):
 
     with col1:
         time_col = st.selectbox("横坐标轴（时间列）请选择数据来源", columns, index=0)
+        time_custom_label = st.text_input("横轴自定义名称（留空则默认取数据来源）", value="")
+
     with col2:
         load_col = st.selectbox("左纵轴（机组负荷）请选择数据来源", columns, index=default_load_index)
+        load_custom_label = st.text_input("左纵轴自定义名称（留空则默认取“机组负荷”）", value="")
+
     with col3:
         pressure_col = st.selectbox("右纵轴（压差）请选择数据来源", columns, index=min(2, len(columns) - 1))
+        pressure_custom_label = st.text_input("右纵轴自定义名称（留空则默认取“压差”）", value="")
+
+    # 处理坐标轴最终显示名称逻辑
+    final_time_label = time_custom_label.strip() if time_custom_label.strip() else time_col
+    
+    raw_load_label = load_custom_label.strip() if load_custom_label.strip() else "机组负荷"
+    final_load_label = f"{raw_load_label}（{load_col}）"
+
+    raw_pressure_label = pressure_custom_label.strip() if pressure_custom_label.strip() else "压差"
+    final_pressure_label = f"{raw_pressure_label}（{pressure_col}）"
 
     st.subheader("3. 负荷过滤配置（可选：支持单值下限或闭区间）")
     f_col1, f_col2 = st.columns(2)
@@ -96,4 +111,4 @@ def render_column_and_filter_config(columns):
             filter_valid = False
             st.error("负荷下限不能大于上限！")
 
-    return time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid
+    return time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid, final_time_label, final_load_label, final_pressure_label

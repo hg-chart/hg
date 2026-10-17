@@ -22,8 +22,8 @@ def format_num(val):
         return str(int(val))
     return str(val)
 
-def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid):
-    """渲染生成趋势图的触发按钮及预览界面（支持负荷区间、无小数点显示及右纵轴命名）"""
+def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid, final_time_label="时间", final_load_label="机组负荷", final_pressure_label="压差"):
+    """渲染生成趋势图的触发按钮及预览界面（支持自定义坐标轴命名与负荷区间）"""
     if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
         if not filter_valid:
             st.error("请先修正负荷过滤条件的输入错误。")
@@ -86,7 +86,7 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                     diagnostics = []
                     periods_detailed_info = []
 
-                    # 格式化负荷条件文本（严格按照输入数值，无多余小数点）
+                    # 格式化负荷条件文本
                     if min_threshold is not None and max_threshold is not None:
                         cond_str_clean = f"{format_num(min_threshold)}-{format_num(max_threshold)}"
                     elif min_threshold is not None:
@@ -187,9 +187,10 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                                 label=f"压差 {period['description']}",
                             )
 
-                        ax1.set_xlabel("运行时间段", fontsize=12)
-                        ax1.set_ylabel(f"负荷（{actual_load_col}）", fontsize=12, color="black")
-                        ax2.set_ylabel(f"压差（{actual_pressure_col}）", fontsize=12, color="black")
+                        # 使用自定义的坐标轴名称
+                        ax1.set_xlabel(final_time_label, fontsize=12)
+                        ax1.set_ylabel(final_load_label, fontsize=12, color="black")
+                        ax2.set_ylabel(final_pressure_label, fontsize=12, color="black")
 
                         ax1.grid(False)
                         ax2.yaxis.set_major_locator(ticker.MultipleLocator(200))

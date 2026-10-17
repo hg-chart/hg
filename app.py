@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（完美兼顾刷新不掉线与正常退出登录）"""
+"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（专为解决 F5 刷新掉线打造的强持久化版本）"""
 
 import inspect
 import os
@@ -121,7 +121,7 @@ if "factory_trash" not in st.session_state:
   st.session_state["factory_trash"] = []
 
 # ============================================================
-# 2. 用户登录认证与 Cookie 状态托管
+# 2. 用户登录认证与强 URL 状态托管（绝对防 F5 刷新掉线）
 # ============================================================
 authenticator = stauth.Authenticate(
     st.session_state["user_db"]["credentials"],
@@ -131,21 +131,18 @@ authenticator = stauth.Authenticate(
     auto_hash=True,
 )
 
-# 🔴 显式初始化安全变量，防止 NameError
-auth_status = st.session_state.get("authentication_status")
-username = st.session_state.get("username")
+# 🔴 核心保障：在脚本刚启动、未做任何组件渲染前，优先通过 URL 查询参数强行恢复会话
+if "auth_status" in st.query_params and st.query_params["auth_status"] == "success":
+  q_user = st.query_params.get("logged_username")
+  if q_user and q_user in st.session_state["user_db"]["credentials"]["usernames"]:
+    st.session_state["username"] = q_user
+    st.session_state["authentication_status"] = True
+    if "name" not in st.session_state:
+      st.session_state["name"] = st.session_state["user_db"]["credentials"]["usernames"][q_user].get("name", q_user)
 
-if auth_status is False:
-  # 用户明确点击了退出登录：彻底清理状态并清空网址参数
-  st.session_state["authentication_status"] = None
-  st.session_state.pop("username", None)
-  st.session_state.pop("name", None)
-  if len(st.query_params) > 0:
-    st.query_params.clear()
-  st.rerun()
-
+# 检查当前内存中是否已处于登录状态
 is_logged_in = False
-if auth_status is True and username:
+if st.session_state.get("authentication_status") is True and st.session_state.get("username"):
   is_logged_in = True
 
 if not is_logged_in:
@@ -169,8 +166,9 @@ if not is_logged_in:
     st.session_state["authentication_status"] = True
     st.session_state["username"] = username
     st.session_state["name"] = name
-    if len(st.query_params) > 0:
-      st.query_params.clear()
+    # 🔴 登录成功的一瞬间，立刻把用户名和成功标识写入网址 URL。这样即使后续按 F5 刷新，网址自带参数也能让系统瞬间恢复状态！
+    st.query_params["auth_status"] = "success"
+    st.query_params["logged_username"] = str(username)
     st.rerun()
   elif authentication_status is False:
     st.error("❌ 用户名或密码错误")
@@ -182,7 +180,7 @@ else:
   username = st.session_state.get("username")
   authentication_status = True
 
-# 检查当前用户名是否合法
+# 检查当前用户名合法性
 if not username or username not in st.session_state["user_db"]["credentials"]["usernames"]:
   st.error("登录账号不存在或权限不足，请重新登录。")
   st.session_state.pop("authentication_status", None)

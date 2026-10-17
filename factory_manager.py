@@ -1,50 +1,53 @@
 # -*- coding: utf-8 -*-
-"""工厂动态管理与回收站独立模块（严格以 Cloudflare R2 云端为唯一准绳）"""
+"""工厂动态管理与回收站独立模块（基于 R2 集中式配置文件同步）"""
 
 import os
+import json
 import shutil
 import streamlit as st
 import r2_storage
 
+CONFIG_FILE_NAME = "factories_config.json"
+
 
 def fetch_factories_from_r2():
-  """绝对以 R2 云端扫描结果为准，实时同步工厂列表，杜绝任何本地缓存滞后"""
-  factories = set(["shanxihg"])  # 默认保底工厂
+  """直接从 R2 云端下载 factories.json 配置文件，实现 100% 以 R2 为准的绝对同步"""
+  default_factories = ["shanxihg"]
   
-  try:
-    r2_client = r2_storage._get_r2_client()
-    bucket_name = getattr(r2_storage, "R2_BUCKET_NAME", None)
-    
-    if r2_client is not None and bucket_name:
-      # 1. 扫描 CommonPrefixes 目录
-      response = r2_client.list_objects_v2(
-          Bucket=bucket_name, Prefix="device-monitor/", Delimiter="/"
-      )
-      if "CommonPrefixes" in response:
-        for p in response["CommonPrefixes"]:
-          parts = p["Prefix"].strip("/").split("/")
-          if len(parts) >= 2:
-            fac_name = parts[1]
-            if fac_name:
-              factories.add(fac_name)
-              
-      # 2. 深度扫描 Contents 键名，确保刚添加带文件的工厂能立刻被 R2 抓取
-      paginator = r2_client.get_paginator("list_objects_v2")
-      for page in paginator.paginate(Bucket=bucket_name, Prefix="device-monitor/"):
-        for obj in page.get("Contents", []):
-          key_parts = obj["Key"].split("/")
-          if len(key_parts) >= 3:
-            fac_name = key_parts[1]
-            if fac_name:
-              factories.add(fac_name)
-  except Exception as e:
-    print(f"实时同步 R2 工厂列表失败: {e}")
+  r2_client = r2_storage._get_r2_client()
+  bucket_name = getattr(r2_storage, "R2_BUCKET_NAME", None)
+
+  if r2_client is not None and bucket_name:
+    try:
+      # 尝试直接从 R2 根目录下载配置文件
+      obj = r2_client.get_object(Bucket=bucket_name, Key="device-monitor/factories_config.json")
+      data = json.loads(obj['Body'].read().decode('utf-8'))
+      if isinstance(data, list) and data:
+        default_factories = data
+    except Exception:
+      # 如果 R2 上还没有该文件，说明是首次运行，自动上传并初始化默认配置
+      sync_factories_to_r2(default_factories)
 
   # 过滤掉处于回收站中的工厂
   trash_list = st.session_state.get("factory_trash", [])
-  active_factories = [f for f in sorted(list(factories)) if f not in trash_list]
+  active_factories = [f for f in sorted(list(default_factories)) if f not in trash_list]
   
   return active_factories if active_factories else ["shanxihg"]
+
+
+def sync_factories_to_r2(factories_list):
+  """将最新的工厂列表保存并强制上传到 R2 云端"""
+  local_path = "factories_config.json"
+  try:
+    with open(local_path, "w", encoding="utf-8") as f:
+      json.dump(factories_list, f, ensure_ascii=False, indent=4)
+    
+    r2_client = r2_storage._get_r2_client()
+    bucket_name = getattr(r2_storage, "R2_BUCKET_NAME", None)
+    if r2_client is not None and bucket_name:
+      r2_client.upload_file(local_path, bucket_name, "device-monitor/factories_config.json")
+  except Exception as e:
+    print(f"同步工厂列表至 R2 失败: {e}")
 
 
 def purge_factory_r2_data(target_factory):
@@ -107,6 +110,12 @@ def confirm_permanent_delete_dialog(target_factory):
         if "factory_trash" in st.session_state and target_factory in st.session_state["factory_trash"]:
           st.session_state["factory_trash"].remove(target_factory)
 
+        # 从 R2 配置文件中移除并同步
+        current_facs = fetch_factories_from_r2()
+        if target_factory in current_facs:
+          current_facs.remove(target_factory)
+          sync_factories_to_r2(current_facs)
+
         for folder_suffix in ["uploaded_vault", "file_trash", "chart_history"]:
           local_dir = f"{folder_suffix}_{target_factory}"
           if os.path.exists(local_dir):
@@ -127,7 +136,7 @@ def render_factory_management(user_role, allowed_factories):
   if "factory_trash" not in st.session_state:
     st.session_state["factory_trash"] = []
 
-  # 核心：每一次页面刷新或运行，强制直接从 R2 云端拉取最新工厂列表作为唯一标准
+  # 核心：每次刷新严格向 R2 请求最新的工厂列表
   current_all_factories = fetch_factories_from_r2()
   st.session_state["all_factories"] = current_all_factories
 
@@ -178,22 +187,17 @@ def render_factory_management(user_role, allowed_factories):
         ):
           st.warning("该工厂已存在或已在回收站中！")
         else:
-          # 在本地创建文件夹，并通过 R2 同步上传占位文件，强制在云端 R2 生成该文件夹对象
-          vault_d = f"uploaded_vault_{new_fac_name}"
-          trash_d = f"file_trash_{new_fac_name}"
-          chart_d = f"chart_history_{new_fac_name}"
-          os.makedirs(vault_d, exist_ok=True)
-          os.makedirs(trash_d, exist_ok=True)
-          os.makedirs(chart_d, exist_ok=True)
+          # 1. 将新工厂追加到列表中
+          current_all_factories.append(new_fac_name)
+          # 2. 立即将最新列表强制同步并写入 R2 云端
+          sync_factories_to_r2(current_all_factories)
           
-          if r2_storage._get_r2_client() is not None:
-            r2_storage.BASE_PREFIX = f"device-monitor/{new_fac_name}/"
-            dummy_file = os.path.join(vault_d, ".keep")
-            with open(dummy_file, "w") as f:
-              f.write("init")
-            r2_storage.r2_upload_file(dummy_file)
+          # 3. 在本地创建对应的隔离文件夹
+          os.makedirs(f"uploaded_vault_{new_fac_name}", exist_ok=True)
+          os.makedirs(f"file_trash_{new_fac_name}", exist_ok=True)
+          os.makedirs(f"chart_history_{new_fac_name}", exist_ok=True)
 
-          st.success(f"已成功添加工厂：{new_fac_name} 并强制同步至 R2 云端！")
+          st.success(f"已成功添加工厂：{new_fac_name} 并已强力同步至 R2 云端！")
           st.rerun()
 
       st.markdown("---")
@@ -210,6 +214,8 @@ def render_factory_management(user_role, allowed_factories):
         if len(current_all_factories) <= 1:
           st.error("至少需要保留一个活跃工厂！")
         else:
+          current_all_factories.remove(del_fac_name)
+          sync_factories_to_r2(current_all_factories)
           st.session_state["factory_trash"].append(del_fac_name)
           st.success(
               f"工厂【{del_fac_name}】已移入回收站（R2 云端数据完整保留）"
@@ -232,8 +238,9 @@ def render_factory_management(user_role, allowed_factories):
           if st.button(
               "↩️ 还原工厂", key="btn_restore_fac", use_container_width=True
           ):
-            if trash_fac_selected in st.session_state["factory_trash"]:
-              st.session_state["factory_trash"].remove(trash_fac_selected)
+            st.session_state["factory_trash"].remove(trash_fac_selected)
+            current_all_factories.append(trash_fac_selected)
+            sync_factories_to_r2(current_all_factories)
             st.success(f"工厂【{trash_fac_selected}】已恢复！")
             st.rerun()
 

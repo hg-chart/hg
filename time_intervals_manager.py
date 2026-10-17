@@ -13,15 +13,8 @@ TRASH_FILE_NAME = "trash_vault.json"
 
 
 def default_templates():
-    return {
-        "监测数据时间段1": [
-            {"start": "2026-08-01 01:01:00", "end": "2026-08-05 01:01:50", "run_sec": "0", "stop_sec": "-"},
-            {"start": "2026-09-19 01:01:50", "end": "2026-09-25 13:09:50", "run_sec": "0", "stop_sec": "-"},
-            {"start": "2026-09-25 13:10:50", "end": "2026-09-29 13:09:50", "run_sec": "30", "stop_sec": "780"},
-            {"start": "2026-10-04 13:09:50", "end": "2026-10-12 15:20:50", "run_sec": "30", "stop_sec": "780"},
-            {"start": "2026-10-12 15:20:51", "end": "2026-10-14 15:20:50", "run_sec": "60", "stop_sec": "300"},
-        ]
-    }
+    # 新工厂默认返回空方案，不再写死测试数据，防止新工厂带入旧测试时段
+    return {}
 
 
 def load_persistent_templates(vault_dir):
@@ -39,7 +32,7 @@ def load_persistent_templates(vault_dir):
                     idx += 1
                 return normalized_data
         except Exception:
-            logging.exception("读取历史时段方案失败，将使用默认方案。")
+            logging.exception("读取历史时段方案失败。")
     return default_templates()
 
 
@@ -84,7 +77,7 @@ def save_trash_bin(trash, vault_dir):
 def render_time_intervals_manager(vault_dir, df_raw, time_col):
     """渲染时间段方案选择、编辑、回收站及新增时段的完整交互逻辑"""
     
-    # 【核心修复】：基于 vault_dir（工厂隔离路径）进行状态检查，若切换工厂则强制重置缓存，杜绝跨工厂混淆
+    # 切换工厂时，强制根据当前 vault_dir 重新加载属于该工厂的独立时段文件
     if st.session_state.get("current_intervals_vault") != vault_dir:
         st.session_state["current_intervals_vault"] = vault_dir
         st.session_state.saved_templates = load_persistent_templates(vault_dir)
@@ -138,7 +131,7 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
                     st.success(f"已将 {actual_key} 移入回收站。")
                     st.rerun()
     else:
-        st.info("暂无可用的时间段方案。")
+        st.info("当前工厂暂无保存的时间段方案，请在下方直接添加。")
 
     if st.session_state.trash_bin:
         with st.expander("🗑️ 回收站（防止误删除）", expanded=False):

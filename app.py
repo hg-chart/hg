@@ -131,13 +131,21 @@ authenticator = stauth.Authenticate(
     auto_hash=True,
 )
 
-# 核心优化：
-# 不再依赖不可靠的 URL 传参（auth_status/logged_username）来防刷新掉线。
-# 而是直接依赖 authenticator 内部自动管理的 Cookie 状态及 session_state。
-is_logged_in = False
+# 🔴 显式初始化安全变量，防止 NameError
+auth_status = st.session_state.get("authentication_status")
+username = st.session_state.get("username")
 
-# 检查 session 中的认证状态
-if st.session_state.get("authentication_status") is True and st.session_state.get("username"):
+if auth_status is False:
+  # 用户明确点击了退出登录：彻底清理状态并清空网址参数
+  st.session_state["authentication_status"] = None
+  st.session_state.pop("username", None)
+  st.session_state.pop("name", None)
+  if len(st.query_params) > 0:
+    st.query_params.clear()
+  st.rerun()
+
+is_logged_in = False
+if auth_status is True and username:
   is_logged_in = True
 
 if not is_logged_in:
@@ -161,7 +169,6 @@ if not is_logged_in:
     st.session_state["authentication_status"] = True
     st.session_state["username"] = username
     st.session_state["name"] = name
-    # 清理可能残留的 URL 垃圾参数
     if len(st.query_params) > 0:
       st.query_params.clear()
     st.rerun()
@@ -175,22 +182,14 @@ else:
   username = st.session_state.get("username")
   authentication_status = True
 
-# 如果用户点击了退出登录，st.session_state["authentication_status"] 会被 authenticator 设为 False 或 None
-if auth_status is False or not username or username not in st.session_state["user_db"]["credentials"]["usernames"]:
-  if auth_status is False:
-    # 用户明确点击了退出登录：彻底清理状态并清空网址参数
-    st.session_state["authentication_status"] = None
-    st.session_state.pop("username", None)
-    st.session_state.pop("name", None)
-    if len(st.query_params) > 0:
-      st.query_params.clear()
-    st.rerun()
-  else:
-    st.error("登录账号不存在或权限不足，请重新登录。")
-    st.session_state.pop("authentication_status", None)
-    st.session_state.pop("username", None)
+# 检查当前用户名是否合法
+if not username or username not in st.session_state["user_db"]["credentials"]["usernames"]:
+  st.error("登录账号不存在或权限不足，请重新登录。")
+  st.session_state.pop("authentication_status", None)
+  st.session_state.pop("username", None)
+  if len(st.query_params) > 0:
     st.query_params.clear()
-    st.stop()
+  st.stop()
 
 # ============================================================
 # 3. 模块化调用侧边栏管理组件与显隐状态控制

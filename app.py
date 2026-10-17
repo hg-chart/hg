@@ -99,9 +99,6 @@ st.markdown(
 if "user_db" not in st.session_state:
   st.session_state["user_db"] = user_manager.load_user_db()
 
-if "factory_trash" not in st.session_state:
-  st.session_state["factory_trash"] = []
-
 # ============================================================
 # 2. 用户登录认证与会话托管
 # ============================================================
@@ -214,6 +211,9 @@ if not username or username not in st.session_state["user_db"]["credentials"]["u
 # ============================================================
 # 3. 模块化调用侧边栏管理组件与显隐状态控制
 # ============================================================
+# 工厂列表以 R2 注册表为准：必须在用户管理（要读 all_factories）之前加载
+factory_manager.ensure_factories_loaded()
+
 current_user = st.session_state["user_db"]["credentials"]["usernames"][username]
 user_role = current_user.get("role", "user")
 allowed_factories = current_user.get("allowed_factories", [])
@@ -307,6 +307,13 @@ selected_factory = factory_manager.render_factory_management(
 )
 st.session_state["selected_factory"] = selected_factory
 
+if not selected_factory:
+  st.info(
+      "👉 当前没有可用的工厂工作区。管理员请在左侧「工厂管理与回收站」中添加工厂；"
+      "普通用户请联系管理员授权。"
+  )
+  st.stop()
+
 # ============================================================
 # 4. R2 存储与工厂隔离桥接
 # ============================================================
@@ -367,4 +374,4 @@ st.set_page_config = safe_set_page_config
 try:
   runpy.run_path("main_dashboard.py", run_name="__main__")
 finally:
-  st.set_page_config = safe_set_page_config
+  st.set_page_config = original_set_page_config

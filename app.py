@@ -95,22 +95,39 @@ st.markdown(
 )
 
 # ============================================================
-# 1. 全局数据源初始化（读取本地持久化 users_db.json）
+# 1. 全局数据源初始化（移除硬编码工厂，支持动态持久化加载）
 # ============================================================
-if "all_factories" not in st.session_state:
-  st.session_state["all_factories"] = [
-      "shanxihg",
-      "太原分厂",
-      "华东一厂",
-      "华东二厂",
-  ]
-
-if "factory_trash" not in st.session_state:
-  st.session_state["factory_trash"] = []
-
 # 从 user_manager 加载持久化文件 users_db.json，不在代码中写死账号字典
 if "user_db" not in st.session_state:
   st.session_state["user_db"] = user_manager.load_user_db()
+
+# 动态初始化工厂列表：优先尝试从 factory_manager 或持久化配置中加载，若无则初始化默认底线池
+if "all_factories" not in st.session_state:
+  # 检查 factory_manager 是否提供了获取持久化工厂列表的函数，否则从用户权限配置或默认安全初始化
+  if hasattr(factory_manager, "load_factory_list"):
+    st.session_state["all_factories"] = factory_manager.load_factory_list()
+  else:
+    # 如果没有专属持久化函数，则从当前所有用户的 allowed_factories 动态聚合收录，彻底根除硬编码复活
+    collected_factories = set()
+    users_dict = st.session_state["user_db"].get("credentials", {}).get("usernames", {})
+    for u_data in users_dict.values():
+      factories = u_data.get("allowed_factories", [])
+      if isinstance(factories, list):
+        collected_factories.update(factories)
+    
+    if collected_factories:
+      st.session_state["all_factories"] = list(collected_factories)
+    else:
+      # 仅在首次全新部署且没有任何配置时赋予基础默认值
+      st.session_state["all_factories"] = [
+          "shanxihg",
+          "太原分厂",
+          "华东一厂",
+          "华东二厂",
+      ]
+
+if "factory_trash" not in st.session_state:
+  st.session_state["factory_trash"] = []
 
 # ============================================================
 # 2. 用户登录认证（增加防刷新旁路判定）

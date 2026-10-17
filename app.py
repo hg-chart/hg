@@ -27,7 +27,7 @@ st.markdown(
     div[data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
     footer { visibility: hidden !important; }
 
-    /* 通用：主内容区左右留白压到最小 */
+    /* 通用：主内容区左右留白压到最小，并在底部增加 40vh 留白，防止底部下拉菜单向上反弹 */
     .main .block-container,
     [data-testid="stMainBlockContainer"],
     div.block-container {
@@ -36,7 +36,7 @@ st.markdown(
         padding-left: 0.8rem !important;
         padding-right: 0.5rem !important;
         padding-top: 1.5rem !important;
-        padding-bottom: 1rem !important;
+        padding-bottom: 40vh !important;
     }
     [data-testid="stMain"],
     [data-testid="stAppViewContainer"] {

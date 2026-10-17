@@ -310,13 +310,13 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                         # 获取当前的右纵轴数据来源作为命名组成部分
                         p_col_current = st.session_state.get("current_pressure_col", pressure_col)
                         
-                        # 生成负荷标签部分（无多余小数点）
+                        # 修复后的负荷标签拼接逻辑（精确适配任意输入的上下限区间）
                         if min_threshold is not None and max_threshold is not None:
                             load_tag_str = f"负荷_{format_num(min_threshold)}_{format_num(max_threshold)}"
                         elif min_threshold is not None:
-                            load_tag_str = f"负荷_{format_num(min_threshold)}"
+                            load_tag_str = f"负荷_≥{format_num(min_threshold)}"
                         elif max_threshold is not None:
-                            load_tag_str = f"负荷_上限_{format_num(max_threshold)}"
+                            load_tag_str = f"负荷_≤{format_num(max_threshold)}"
                         else:
                             load_tag_str = "负荷_全部"
 
@@ -335,3 +335,4 @@ def render_chart_generator(df_raw, time_col, load_col, pressure_col, min_thresho
                             st.error("同步到 Cloudflare R2 失败，请检查网络或配置。")
                     except Exception as e:
                         st.error(f"保存图片时出错：{e}")
+```[cite: 11]

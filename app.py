@@ -95,13 +95,11 @@ st.markdown(
 )
 
 # ============================================================
-# 1. 全局数据源初始化（移除硬编码工厂，支持动态持久化加载）
+# 1. 全局数据源初始化
 # ============================================================
-# 从 user_manager 加载持久化文件 users_db.json，不在代码中写死账号字典
 if "user_db" not in st.session_state:
   st.session_state["user_db"] = user_manager.load_user_db()
 
-# 动态初始化工厂列表：优先尝试从 factory_manager 或持久化配置中加载，若无则初始化默认底线池
 if "all_factories" not in st.session_state:
   if hasattr(factory_manager, "load_factory_list"):
     st.session_state["all_factories"] = factory_manager.load_factory_list()
@@ -127,7 +125,7 @@ if "factory_trash" not in st.session_state:
   st.session_state["factory_trash"] = []
 
 # ============================================================
-# 2. 用户登录认证（修复退出登录无法清除状态及URL残留的问题）
+# 2. 用户登录认证与防刷新掉线持久化
 # ============================================================
 authenticator = stauth.Authenticate(
     st.session_state["user_db"]["credentials"],
@@ -137,25 +135,20 @@ authenticator = stauth.Authenticate(
     auto_hash=True,
 )
 
-# 如果 session 中明确没有登录状态，或者用户在组件里点了退出，必须强制清理 URL 残留
-if not st.session_state.get("authentication_status"):
-  st.session_state.pop("username", None)
-  st.session_state.pop("authentication_status", None)
-  if "auth_status" in st.query_params or "logged_username" in st.query_params:
-    st.query_params.clear()
-    st.rerun()
+# 核心防掉线增强逻辑：优先检查 URL 参数恢复状态
+if "auth_status" in st.query_params and st.query_params["auth_status"] == "success":
+  if "logged_username" in st.query_params:
+    q_user = st.query_params["logged_username"]
+    if q_user in st.session_state["user_db"]["credentials"]["usernames"]:
+      st.session_state["username"] = q_user
+      st.session_state["authentication_status"] = True
+      if "name" not in st.session_state:
+        st.session_state["name"] = st.session_state["user_db"]["credentials"]["usernames"][q_user].get("name", q_user)
 
-# 检查当前是否已经成功登录（从 Session 或 URL query 中恢复）
+# 执行认证检查
 is_logged_in = False
-
 if st.session_state.get("authentication_status") is True and st.session_state.get("username"):
   is_logged_in = True
-elif "auth_status" in st.query_params and st.query_params["auth_status"] == "success":
-  # 从 URL 中读取标记并自动恢复状态
-  if "logged_username" in st.query_params:
-    st.session_state["username"] = st.query_params["logged_username"]
-    st.session_state["authentication_status"] = True
-    is_logged_in = True
 
 if not is_logged_in:
   # 未登录状态：渲染登录界面
@@ -178,6 +171,7 @@ if not is_logged_in:
     st.session_state["authentication_status"] = True
     st.session_state["username"] = username
     st.session_state["name"] = name
+    # 写入防刷新 URL 标识
     st.query_params["auth_status"] = "success"
     st.query_params["logged_username"] = str(username)
     st.rerun()
@@ -188,26 +182,20 @@ if not is_logged_in:
     st.info("👉 请输入您的登录凭据以访问系统")
     st.stop()
 else:
-  # 已确认登录状态
   username = st.session_state.get("username")
   authentication_status = True
 
-if (
-    username not in st.session_state["user_db"]["credentials"]["usernames"]
-):
+if username not in st.session_state["user_db"]["credentials"]["usernames"]:
   st.error("登录账号不存在或权限不足，请重新登录。")
-  # 清理异常状态
   st.session_state.pop("authentication_status", None)
   st.session_state.pop("username", None)
   st.query_params.clear()
-  st.stop()
+  st.rerun()
 
 # ============================================================
 # 3. 模块化调用侧边栏管理组件与显隐状态控制
 # ============================================================
-current_user = st.session_state["user_db"]["credentials"]["usernames"][
-    username
-]
+current_user = st.session_state["user_db"]["credentials"]["usernames"][username]
 user_role = current_user.get("role", "user")
 allowed_factories = current_user.get("allowed_factories", [])
 

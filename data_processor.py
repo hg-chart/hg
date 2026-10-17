@@ -65,22 +65,7 @@ def render_column_and_filter_config(columns):
 
     st.subheader("2. 数据列选择与坐标轴命名配置")
 
-    # 1. 蓝色框部分：数据来源选择下拉框（保持动态，不参与锁定）
-    default_load_index = min(1, len(columns) - 1)
-    if "W3.UNIT1.10DEHDCSAI03" in columns:
-        default_load_index = columns.index("W3.UNIT1.10DEHDCSAI03")
-
-    col1_bot, col2_bot, col3_bot = st.columns(3)
-    with col1_bot:
-        time_col = st.selectbox("横坐标轴（时间列）请选择数据来源", columns, index=0)
-    with col2_bot:
-        load_col = st.selectbox("左纵轴请选择数据来源", columns, index=default_load_index)
-    with col3_bot:
-        pressure_col = st.selectbox("右纵轴请选择数据来源", columns, index=min(2, len(columns) - 1))
-
-    st.markdown("---")
-
-    # 2. 红色框部分：坐标轴自定义名称（支持锁定记忆与修改按钮）
+    # 1. 红色框部分：坐标轴自定义名称（放在最上面）
     if st.session_state[config_state_key] and has_cached_config:
         cfg = st.session_state[cache_key_prefix]
         
@@ -113,6 +98,7 @@ def render_column_and_filter_config(columns):
         with col3_top:
             pressure_custom_label = st.text_input("右纵轴自定义名称", value=default_cfg.get("pressure_custom", ""), placeholder="留空则默认取字段名")
 
+        # 按钮放在红色框下方、蓝色框上面
         if st.button("💾 保存并锁定坐标轴名称配置", key=f"btn_save_axis_{current_factory}", type="primary"):
             st.session_state[cache_key_prefix] = {
                 "time_custom": time_custom_label,
@@ -122,6 +108,21 @@ def render_column_and_filter_config(columns):
             st.session_state[config_state_key] = True
             st.success("坐标轴名称配置已成功保存并锁定！")
             st.rerun()
+
+    st.markdown("---")
+
+    # 2. 蓝色框部分：数据来源选择下拉框（放在红框和按钮的下方）
+    default_load_index = min(1, len(columns) - 1)
+    if "W3.UNIT1.10DEHDCSAI03" in columns:
+        default_load_index = columns.index("W3.UNIT1.10DEHDCSAI03")
+
+    col1_bot, col2_bot, col3_bot = st.columns(3)
+    with col1_bot:
+        time_col = st.selectbox("横坐标轴（时间列）请选择数据来源", columns, index=0)
+    with col2_bot:
+        load_col = st.selectbox("左纵轴请选择数据来源", columns, index=default_load_index)
+    with col3_bot:
+        pressure_col = st.selectbox("右纵轴请选择数据来源", columns, index=min(2, len(columns) - 1))
 
     # 动态计算最终显示名称
     final_time_label = time_custom_label.strip() if time_custom_label.strip() else time_col

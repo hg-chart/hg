@@ -21,7 +21,7 @@ def render_sidebar(authenticator, name, username, user_credentials):
         current_user = user_credentials["credentials"]["usernames"][username]
         user_role = current_user.get("role", "user")
         allowed_factories = current_user.get("allowed_factories", [])
-        all_factories = ["shanxihg", "太原分厂", "华东一厂", "华东二厂"]
+        all_factories = ["shanxihg", "太原分厂X", "华东一厂X", "华东二厂X"]
 
         if user_role == "admin" or allowed_factories == "ALL":
             selected_factory = st.selectbox("选择目标工厂", all_factories, key="sidebar_factory_select_admin")

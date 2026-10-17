@@ -7,7 +7,7 @@ import r2_storage
 
 
 def render_cloud_chart_manager(chart_history_dir, chart_trash_dir):
-    """渲染云端历史图表按三级（方案大类、右纵轴来源、负荷标签）检索与调用界面"""
+    """渲染云端历史图表按三级（方案大类、右纵轴来源、动态变量标签）检索与调用界面"""
     st.markdown("---")
     st.subheader("☁️ 云端历史对比趋势图按来源与标签检索调用")
 
@@ -20,7 +20,7 @@ def render_cloud_chart_manager(chart_history_dir, chart_trash_dir):
             chart_keys = [k for k in all_keys if "chart_history/" in k and k.endswith(".png")]
             
             if chart_keys:
-                # 嵌套字典结构：schemes_dict[scheme][pressure_source][load_tag] = (filename, key)
+                # 嵌套字典结构：schemes_dict[scheme][pressure_source][filter_tag] = (filename, key)
                 schemes_dict = {}
                 for k in chart_keys:
                     parts = k.split("/")
@@ -31,36 +31,32 @@ def render_cloud_chart_manager(chart_history_dir, chart_trash_dir):
                         if scheme not in schemes_dict:
                             schemes_dict[scheme] = {}
                         
-                        # 解析文件名结构：[压差来源]_[负荷标签部分]_[时间戳].png
-                        # 例如: W3.FW.AHTE10CP201F_负荷_260_270_20261017_120000.png
-                        # 我们通过倒数第二段和倒数第三段来切分时间戳，前面即为 压差数据来源
+                        # 解析文件名结构：[数据源列名]_[过滤变量名]_[过滤条件]_[时间戳].png
+                        # 例如: W3.FW.AHTE10CP201F_压差_≥2000_20261017_044158.png
+                        # 第一段是数据源列名 (如 W3.FW.AHTE10CP201F)，之后紧跟的是过滤变量名称
                         name_no_ext = filename.rsplit(".", 1)[0]
                         name_parts = name_no_ext.split("_")
                         
-                        # 寻找 "负荷" 关键词的位置
-                        load_idx = -1
-                        for idx, p in enumerate(name_parts):
-                            if p == "负荷":
-                                load_idx = idx
-                                break
-                        
-                        if load_idx > 0:
-                            pressure_source = "_".join(name_parts[:load_idx])
-                            tag_parts = name_parts[load_idx:]
+                        if len(name_parts) >= 3:
+                            pressure_source = name_parts[0]
+                            # 过滤变量名通常在第2段 (例如 "压差" 或 "负荷" 等)
+                            filter_var_name = name_parts[1]
                             
-                            # 提取负荷标签
-                            if len(tag_parts) >= 3 and tag_parts[1].replace('.', '', 1).isdigit() and tag_parts[2].replace('.', '', 1).isdigit():
-                                load_tag = f"{tag_parts[0]}_{tag_parts[1]}_{tag_parts[2]}"
-                            elif len(tag_parts) >= 3 and tag_parts[1] == "上限":
-                                load_tag = f"{tag_parts[0]}_{tag_parts[1]}_{tag_parts[2]}"
-                            elif len(tag_parts) >= 2 and tag_parts[1].replace('.', '', 1).isdigit():
-                                load_tag = f"{tag_parts[0]}_{tag_parts[1]}"
-                            elif len(tag_parts) >= 2 and tag_parts[1] == "全部":
-                                load_tag = "负荷_全部"
+                            # 提取后面的阈值/条件作为标签
+                            tag_sub_parts = name_parts[1:]
+                            if len(tag_sub_parts) >= 3 and tag_sub_parts[1].replace('.', '', 1).isdigit() and tag_sub_parts[2].replace('.', '', 1).isdigit():
+                                load_tag = f"{tag_sub_parts[0]}_{tag_sub_parts[1]}_{tag_sub_parts[2]}"
+                            elif len(tag_sub_parts) >= 3 and tag_sub_parts[1] == "上限":
+                                load_tag = f"{tag_sub_parts[0]}_{tag_sub_parts[1]}_{tag_sub_parts[2]}"
+                            elif len(tag_sub_parts) >= 2 and tag_sub_parts[1].replace('.', '', 1).isdigit():
+                                load_tag = f"{tag_sub_parts[0]}_{tag_sub_parts[1]}"
+                            elif len(tag_sub_parts) >= 2 and tag_sub_parts[1] == "全部":
+                                load_tag = f"{tag_sub_parts[0]}_全部"
                             else:
-                                load_tag = "_".join(tag_parts[:2])
+                                load_tag = "_".join(tag_sub_parts[:2])
                         else:
                             pressure_source = "未知数据来源"
+                            filter_var_name = "变量"
                             load_tag = name_no_ext
 
                         if pressure_source not in schemes_dict[scheme]:
@@ -87,20 +83,29 @@ def render_cloud_chart_manager(chart_history_dir, chart_trash_dir):
                         key="sel_pressure"
                     )
                     
-                    # 第三级：选择负荷标签
+                    # 第三级：动态获取当前选中的变量名称（替代写死的“负荷”）
+                    dynamic_filter_label = "过滤标签"
+                    if selected_scheme != "-- 请选择 --" and selected_pressure != "-- 请选择 --":
+                        sample_files = list(schemes_dict[selected_scheme][selected_pressure].keys())
+                        if sample_files:
+                            first_tag = sample_files[0]
+                            if "_" in first_tag:
+                                dynamic_filter_label = first_tag.split("_")[0]
+
+                    # 第三级：选择动态变量标签筛选
                     available_tags = ["-- 请选择 --"]
                     if selected_scheme != "-- 请选择 --" and selected_pressure != "-- 请选择 --":
                         available_tags += sorted(list(schemes_dict[selected_scheme][selected_pressure].keys()))
                     
                     selected_tag = st.selectbox(
-                        "🏷️ 选择负荷标签筛选", 
+                        f"🏷️ 选择 [{dynamic_filter_label}] 标签筛选", 
                         available_tags, 
                         key="sel_tag"
                     )
                     
                     if st.button("🔍 查看选中的图片", type="primary", key="btn_view_chart"):
                         if selected_scheme == "-- 请选择 --" or selected_pressure == "-- 请选择 --" or selected_tag == "-- 请选择 --":
-                            st.warning("请完整选择“时间段方案大类”、“右纵轴数据来源”和“负荷标签”。")
+                            st.warning("请完整选择“时间段方案大类”、“右纵轴数据来源”和“筛选标签”。")
                         else:
                             pressure_data = schemes_dict.get(selected_scheme, {}).get(selected_pressure, {})
                             if selected_tag in pressure_data:

@@ -51,15 +51,14 @@ def load_and_process_data(active_paths):
 
 
 def render_column_and_filter_config(columns):
-    """渲染数据列选择、坐标轴自定义命名和动态指标过滤配置（支持上下调换与全动态适配）"""
+    """渲染数据列选择、坐标轴自定义命名和动态交互式指标过滤配置"""
     st.subheader("2. 数据列选择与坐标轴命名配置")
     
-    # 默认选中索引
     default_load_index = min(1, len(columns) - 1)
     if "W3.UNIT1.10DEHDCSAI03" in columns:
         default_load_index = columns.index("W3.UNIT1.10DEHDCSAI03")
 
-    # 第一行：自定义名称输入框（置于上方）
+    # 第一行：自定义名称输入框（蓝色椭圆框对应的变量名称）
     col1_top, col2_top, col3_top = st.columns(3)
     with col1_top:
         time_custom_label = st.text_input("横轴自定义名称", value="", placeholder="留空则默认取字段名")
@@ -68,7 +67,7 @@ def render_column_and_filter_config(columns):
     with col3_top:
         pressure_custom_label = st.text_input("右纵轴自定义名称", value="", placeholder="留空则默认取字段名")
 
-    # 第二行：数据来源选择下拉框（置于下方）
+    # 第二行：数据来源选择下拉框
     col1_bot, col2_bot, col3_bot = st.columns(3)
     with col1_bot:
         time_col = st.selectbox("横坐标轴（时间列）请选择数据来源", columns, index=0)
@@ -77,7 +76,7 @@ def render_column_and_filter_config(columns):
     with col3_bot:
         pressure_col = st.selectbox("右纵轴请选择数据来源", columns, index=min(2, len(columns) - 1))
 
-    # 动态计算最终坐标轴显示名称
+    # 动态计算最终显示名称
     final_time_label = time_custom_label.strip() if time_custom_label.strip() else time_col
     
     raw_load_label = load_custom_label.strip() if load_custom_label.strip() else load_col
@@ -86,15 +85,30 @@ def render_column_and_filter_config(columns):
     raw_pressure_label = pressure_custom_label.strip() if pressure_custom_label.strip() else pressure_col
     final_pressure_label = f"{raw_pressure_label}（{pressure_col}）"
 
-    # 提取纯文本的主指标名称（用于第三部分的动态标题），如果没填自定义名称则取左纵轴字段名
-    main_metric_name = load_custom_label.strip() if load_custom_label.strip() else load_col
+    # 第三部分：交互式选择要过滤的目标变量（从上方定义的变量中选择）
+    st.subheader("3. 数据过滤配置（可选：支持单值下限或闭区间）")
+    
+    # 提取可供选择的变量列表（左纵轴和右纵轴的自定义/字段名称）
+    available_filter_metrics = [raw_load_label, raw_pressure_label]
+    
+    sel_col1, sel_col2 = st.columns([1, 2])
+    with sel_col1:
+        selected_filter_metric = st.selectbox("选择过滤目标变量", options=available_filter_metrics, index=0)
+    
+    # 根据用户选择的过滤变量，自动映射到对应的实际数据列
+    if selected_filter_metric == raw_load_label:
+        filter_target_col = load_col
+    else:
+        filter_target_col = pressure_col
 
-    st.subheader(f"3. {main_metric_name}过滤配置（可选：支持单值下限或闭区间）")
+    with sel_col2:
+        st.info(f"💡 当前正在对 **{selected_filter_metric}**（对应列：`{filter_target_col}`）设置数值区间过滤。")
+
     f_col1, f_col2 = st.columns(2)
     with f_col1:
-        min_threshold_text = st.text_input(f"{main_metric_name}下限阈值（留空则不限制下限）", value="")
+        min_threshold_text = st.text_input(f"{selected_filter_metric}下限阈值（留空则不限制下限）", value="")
     with f_col2:
-        max_threshold_text = st.text_input(f"{main_metric_name}上限阈值（留空则只做大于等于下限过滤）", value="")
+        max_threshold_text = st.text_input(f"{selected_filter_metric}上限阈值（留空则只做大于等于下限过滤）", value="")
 
     min_threshold = None
     max_threshold = None
@@ -105,18 +119,23 @@ def render_column_and_filter_config(columns):
             min_threshold = float(min_threshold_text.strip())
         except ValueError:
             filter_valid = False
-            st.error(f"{main_metric_name}下限必须是数字。")
+            st.error(f"{selected_filter_metric}下限必须是数字。")
 
     if max_threshold_text.strip():
         try:
             max_threshold = float(max_threshold_text.strip())
         except ValueError:
             filter_valid = False
-            st.error(f"{main_metric_name}上限必须是数字。")
+            st.error(f"{selected_filter_metric}上限必须是数字。")
 
     if filter_valid and min_threshold is not None and max_threshold is not None:
         if min_threshold > max_threshold:
             filter_valid = False
-            st.error(f"{main_metric_name}下限不能大于上限！")
+            st.error(f"{selected_filter_metric}下限不能大于上限！")
 
-    return time_col, load_col, pressure_col, min_threshold, max_threshold, filter_valid, final_time_label, final_load_label, final_pressure_label
+    return (
+        time_col, load_col, pressure_col, 
+        min_threshold, max_threshold, filter_valid, 
+        final_time_label, final_load_label, final_pressure_label,
+        filter_target_col, selected_filter_metric
+    )

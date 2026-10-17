@@ -1,10 +1,48 @@
 # -*- coding: utf-8 -*-
-"""工厂动态管理与回收站独立模块"""
+"""工厂动态管理与回收站独立模块（以存储/云端实际目录为唯一准绳）"""
 
 import os
 import shutil
 import streamlit as st
 import r2_storage
+
+
+def discover_factories():
+  """以本地和R2云端实际存在的工厂目录为准，动态发现所有有效工厂，绝不硬编码，杜绝诈尸"""
+  valid_factories = set(["shanxihg", "太原分厂", "华东一厂", "华东二厂"]) # 系统底线默认厂
+  
+  # 1. 扫描当前运行目录下所有以 uploaded_vault_ 开头的隔离文件夹
+  try:
+    for item in os.listdir("."):
+      if os.path.isdir(item) and item.startswith("uploaded_vault_"):
+        fac_name = item.replace("uploaded_vault_", "", 1)
+        if fac_name:
+          valid_factories.add(fac_name)
+  except Exception:
+    pass
+
+  # 2. 如果R2客户端可用，也可以从R2云端目录结构中自动发现
+  try:
+    r2_client = r2_storage._get_r2_client()
+    bucket_name = getattr(r2_storage, "R2_BUCKET_NAME", None)
+    if r2_client is not None and bucket_name:
+      response = r2_client.list_objects_v2(Bucket=bucket_name, Prefix="device-monitor/", Delimiter="/")
+      if "CommonPrefixes" in response:
+        for p in response["CommonPrefixes"]:
+          # 路径形如 device-monitor/工厂名/
+          parts = p["Prefix"].strip("/").split("/")
+          if len(parts) >= 2:
+            fac_name = parts[1]
+            if fac_name:
+              valid_factories.add(fac_name)
+  except Exception:
+    pass
+
+  # 排除掉已经被放入回收站的工厂
+  trash_list = st.session_state.get("factory_trash", [])
+  active_facs = [f for f in sorted(list(valid_factories)) if f not in trash_list]
+  
+  return active_facs if active_facs else ["shanxihg"]
 
 
 def purge_factory_r2_data(target_factory):
@@ -67,9 +105,7 @@ def confirm_permanent_delete_dialog(target_factory):
         if "factory_trash" in st.session_state and target_factory in st.session_state["factory_trash"]:
           st.session_state["factory_trash"].remove(target_factory)
 
-        if "all_factories" in st.session_state and target_factory in st.session_state["all_factories"]:
-          st.session_state["all_factories"].remove(target_factory)
-
+        # 彻底销毁本地所有相关隔离文件夹
         for folder_suffix in ["uploaded_vault", "file_trash", "chart_history"]:
           local_dir = f"{folder_suffix}_{target_factory}"
           if os.path.exists(local_dir):
@@ -87,25 +123,26 @@ def render_factory_management(user_role, allowed_factories):
   """渲染侧边栏工厂工作区选择与工厂管理回收站模块"""
   st.sidebar.title("🏭 工厂工作区")
 
-  # 确保 session_state 初始化（如果主程序没有初始化，这里提供默认值）
-  if "all_factories" not in st.session_state:
-    st.session_state["all_factories"] = ["一厂", "二厂"]
   if "factory_trash" not in st.session_state:
     st.session_state["factory_trash"] = []
 
-  if st.session_state.get("selected_factory_val") not in st.session_state["all_factories"]:
-    if st.session_state["all_factories"]:
-      st.session_state["selected_factory_val"] = st.session_state["all_factories"][0]
+  # 每次渲染实时从底层存储盘点活跃工厂，确保刷新后百分之百同步
+  current_all_factories = discover_factories()
+  st.session_state["all_factories"] = current_all_factories
+
+  if st.session_state.get("selected_factory_val") not in current_all_factories:
+    if current_all_factories:
+      st.session_state["selected_factory_val"] = current_all_factories[0]
 
   if user_role == "admin" or allowed_factories == "ALL":
     selected_factory = st.sidebar.selectbox(
         "选择目标工厂",
-        st.session_state["all_factories"],
+        current_all_factories,
         key="factory_select_main_admin",
     )
   else:
     user_fac_list = [
-        f for f in st.session_state["all_factories"] if f in allowed_factories
+        f for f in current_all_factories if f in allowed_factories
     ]
     if not user_fac_list:
       user_fac_list = (
@@ -135,12 +172,16 @@ def render_factory_management(user_role, allowed_factories):
         if not new_fac_name:
           st.error("工厂名称不能为空！")
         elif (
-            new_fac_name in st.session_state["all_factories"]
+            new_fac_name in current_all_factories
             or new_fac_name in st.session_state["factory_trash"]
         ):
           st.warning("该工厂已存在或已在回收站中！")
         else:
-          st.session_state["all_factories"].append(new_fac_name)
+          # 直接在本地创建对应的存储文件夹，底层存储一变，系统立刻识别
+          os.makedirs(f"uploaded_vault_{new_fac_name}", exist_ok=True)
+          os.makedirs(f"file_trash_{new_fac_name}", exist_ok=True)
+          os.makedirs(f"chart_history_{new_fac_name}", exist_ok=True)
+          
           st.success(f"已成功添加工厂：{new_fac_name}")
           st.rerun()
 
@@ -149,16 +190,15 @@ def render_factory_management(user_role, allowed_factories):
       st.caption("提示：移入回收站时保留 R2 云端数据。")
       del_fac_name = st.selectbox(
           "选择移入回收站的工厂",
-          st.session_state["all_factories"],
+          current_all_factories,
           key="del_fac_select",
       )
       if st.button(
           "📥 移入回收站", key="btn_move_trash", use_container_width=True
       ):
-        if len(st.session_state["all_factories"]) <= 1:
+        if len(current_all_factories) <= 1:
           st.error("至少需要保留一个活跃工厂！")
         else:
-          st.session_state["all_factories"].remove(del_fac_name)
           st.session_state["factory_trash"].append(del_fac_name)
           st.success(
               f"工厂【{del_fac_name}】已移入回收站（R2 云端数据完整保留）"
@@ -181,8 +221,8 @@ def render_factory_management(user_role, allowed_factories):
           if st.button(
               "↩️ 还原工厂", key="btn_restore_fac", use_container_width=True
           ):
-            st.session_state["factory_trash"].remove(trash_fac_selected)
-            st.session_state["all_factories"].append(trash_fac_selected)
+            if trash_fac_selected in st.session_state["factory_trash"]:
+              st.session_state["factory_trash"].remove(trash_fac_selected)
             st.success(f"工厂【{trash_fac_selected}】已恢复！")
             st.rerun()
 

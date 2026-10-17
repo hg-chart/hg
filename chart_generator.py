@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""模块五：图表绘制与预览（带详细列检索诊断提示）"""
+"""模块五：图表绘制与预览"""
 import io
 import os
 from datetime import datetime
@@ -23,7 +23,7 @@ def render_chart_generator(
     final_time_label="时间", final_load_label="机组负荷", final_pressure_label="压差",
     filter_target_col=None, filter_metric_name="机组负荷"
 ):
-    """渲染生成趋势图的触发按钮及预览界面（带强力诊断提示）"""
+    """渲染生成趋势图的触发按钮及预览界面"""
     if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
         if not filter_valid:
             st.error("请先修正过滤条件的输入错误。")
@@ -43,15 +43,6 @@ def render_chart_generator(
                     actual_pressure_col = pressure_col
                     actual_filter_col = filter_target_col if filter_target_col else load_col
 
-                    # 1. 打印详细的列检索诊断，让用户一眼看清程序用的是哪几列
-                    st.info(
-                        f"📊 **【取数与列诊断】**\n\n"
-                        f"- 横坐标列 (`actual_time_col`)：`{actual_time_col}`\n"
-                        f"- 左纵轴列 (`actual_load_col`)：`{actual_load_col}`\n"
-                        f"- 右纵轴列 (`actual_pressure_col`)：`{actual_pressure_col}`\n"
-                        f"- 过滤目标列 (`actual_filter_col`)：`{actual_filter_col}`"
-                    )
-
                     required = [actual_time_col, actual_load_col, actual_pressure_col, actual_filter_col]
                     missing = [col for col in required if col not in df.columns]
                     if missing:
@@ -67,11 +58,7 @@ def render_chart_generator(
                     df[actual_pressure_col] = pd.to_numeric(df[actual_pressure_col], errors="coerce")
                     df[actual_filter_col] = pd.to_numeric(df[actual_filter_col], errors="coerce")
                     
-                    # 剔除无效行前的数量记录
-                    total_rows_before = len(df)
                     df = df.dropna(subset=[actual_time_col, actual_load_col, actual_filter_col])
-                    valid_rows_after_dropna = len(df)
-                    
                     df = df.sort_values(actual_time_col).reset_index(drop=True)
                     df = df[df[actual_filter_col] != 0].copy()
 
@@ -156,10 +143,10 @@ def render_chart_generator(
                             "color": fill_color
                         })
 
-                    st.info("🔍 各时段数据检索诊断：" + " | ".join(diagnostics) + f" (原始总行数: {total_rows_before}, 清洗后有效行: {valid_rows_after_dropna})")
+                    st.info("🔍 各时段数据检索诊断：" + " | ".join(diagnostics))
 
                     if not plotted_periods:
-                        st.warning("指定时间段和过滤条件下均未检索到有效数据。请检查上方【取数与列诊断】中指定的列名是否与您表格中的实际物理列名完全相符。")
+                        st.warning("指定时间段和过滤条件下均未检索到有效数据。")
                         st.session_state.plotted_fig_bytes = None
                         st.session_state.plotted_title = ""
                         st.session_state.plotted_periods_info = []

@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""独立侧边栏与工厂工作区管理模块"""
+"""独立侧边栏与工厂工作区管理模块（严格以 R2 注册表为准，拒绝写死）"""
 
 import os
 import shutil
 import streamlit as st
 import r2_storage
+import factory_registry  # 引入 Claude 提供的云端注册表模块
 
 def render_sidebar(authenticator, name, username, user_credentials):
     """强制在绝对左侧渲染并接管侧边栏"""
@@ -21,12 +22,20 @@ def render_sidebar(authenticator, name, username, user_credentials):
         current_user = user_credentials["credentials"]["usernames"][username]
         user_role = current_user.get("role", "user")
         allowed_factories = current_user.get("allowed_factories", [])
-        all_factories = ["shanxihg", "太原分厂X", "华东一厂X", "华东二厂X"]
+        
+        # 绝不写死！直接从 R2 云端注册表动态获取最新的工厂列表
+        all_factories = factory_registry.load_factories_from_r2()
 
         if user_role == "admin" or allowed_factories == "ALL":
+            if not all_factories:
+                st.warning("⚠️ 当前暂无可用工厂，请在下方或管理后台添加。")
+                all_factories = ["shanxihg"]
             selected_factory = st.selectbox("选择目标工厂", all_factories, key="sidebar_factory_select_admin")
         else:
-            selected_factory = st.selectbox("选择当前工厂", allowed_factories, key="sidebar_factory_select_user")
+            user_fac_list = [f for f in all_factories if f in allowed_factories]
+            if not user_fac_list:
+                user_fac_list = allowed_factories if isinstance(allowed_factories, list) else [allowed_factories]
+            selected_factory = st.selectbox("选择当前工厂", user_fac_list, key="sidebar_factory_select_user")
 
         st.success(f"已连接工作区：\n**{selected_factory}**")
         st.markdown("---")

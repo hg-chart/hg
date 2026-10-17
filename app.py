@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（专为解决 F5 刷新掉线打造的强持久化版本）"""
+"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（完全去硬编码、以存储为准版本）"""
 
 import inspect
 import json
@@ -94,52 +94,22 @@ st.markdown(
 )
 
 # ============================================================
-# 1. 全局数据源与持久化工厂列表初始化
+# 1. 全局数据源初始化（完全依靠存储发现，无硬编码工厂）
 # ============================================================
-FACTORIES_CONFIG_FILE = "factories_config.json"
-
-def load_persistent_factories():
-    """从本地配置文件加载工厂列表，若不存在则初始化默认工厂"""
-    if os.path.exists(FACTORIES_CONFIG_FILE):
-        try:
-            with open(FACTORIES_CONFIG_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list) and data:
-                    return data
-        except Exception:
-            pass
-    # 默认初始工厂
-    default_facs = ["shanxihg", "太原分厂", "华东一厂", "华东二厂"]
-    save_persistent_factories(default_facs)
-    return default_facs
-
-def save_persistent_factories(factories_list):
-    """保存工厂列表到本地持久化文件"""
-    try:
-        with open(FACTORIES_CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(factories_list, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        print(f"保存工厂配置失败: {e}")
-
 if "user_db" not in st.session_state:
   st.session_state["user_db"] = user_manager.load_user_db()
-
-if "all_factories" not in st.session_state:
-  # 统一从持久化配置文件加载，确保新增工厂刷新后绝不丢失
-  st.session_state["all_factories"] = load_persistent_factories()
 
 if "factory_trash" not in st.session_state:
   st.session_state["factory_trash"] = []
 
 # ============================================================
-# 2. 用户登录认证与「刷新不掉线 / 退出能退出」的会话托管
+# 2. 用户登录认证与会话托管
 # ============================================================
 SESSION_TTL_SECONDS = 12 * 3600  # 令牌有效期（每次刷新自动顺延）
 
 
 @st.cache_resource
 def _session_store():
-  """服务器端会话表：令牌 -> {用户名, 过期时间}。所有浏览器会话共用。"""
   return {}
 
 
@@ -150,7 +120,6 @@ def _issue_token(user):
 
 
 def _lookup_token(token):
-  """令牌有效则返回用户名，并顺延有效期；无效/过期返回 None。"""
   if not token:
     return None
   store = _session_store()
@@ -398,4 +367,4 @@ st.set_page_config = safe_set_page_config
 try:
   runpy.run_path("main_dashboard.py", run_name="__main__")
 finally:
-  st.set_page_config = original_set_page_config
+  st.set_page_config = safe_set_page_config

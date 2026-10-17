@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""模块三：数据读取与清洗过滤（支持多层复合表头智能展平与日期时间合并）"""
+"""模块三：数据读取与清洗过滤（支持多层复合表头智能展平与日期点号转换）"""
 import json
 import os
 from pathlib import Path
@@ -37,23 +37,24 @@ def _flatten_multiindex_headers(df):
     智能化清洗工厂多层复合表头：
     1. 自动前向填充合并单元格（如跨行的日期）
     2. 将多层级表头扁平化展平（如：1# + 斗提机电流(A) -> 1#斗提机电流(A)）
-    3. 自动合并“日期”与“时间”列为标准的“时间”列，并剔除“班别”
+    3. 自动将带点号的日期（如 2026.9.13）转为标准格式并与时间合并
+    4. 自动剔除“班别”
     """
     # 如果是多层表头（MultiIndex）
     if isinstance(df.columns, pd.MultiIndex):
-        # 1. 尝试前向填充合并单元格产生的 NaN（主要针对日期列）
         df = df.ffill()
-
         new_cols = []
         for col in df.columns:
-            # 过滤掉 Unnamed 或空白的层级名称
-            parts = [str(c).strip() for c in col if c is not None and "Unnamed" not in str(c) and str(c).strip() != "nan"]
-            
+            parts = [
+                str(c).strip()
+                for c in col
+                if c is not None
+                and "Unnamed" not in str(c)
+                and str(c).strip() != "nan"
+            ]
             if not parts:
                 new_cols.append("未知列")
                 continue
-
-            # 匹配常规字段
             combined_name = "".join(parts)
             if "日期" in combined_name:
                 new_cols.append("日期")
@@ -71,34 +72,44 @@ def _flatten_multiindex_headers(df):
                         new_cols.append("_".join(parts))
                 else:
                     new_cols.append(parts[0])
-        
         df.columns = new_cols
 
-    # 2. 清理列名空白与 BOM
     df.columns = df.columns.astype(str).str.strip().str.lstrip("\ufeff")
 
-    # 3. 智能处理时间与日期合并
-    # 检查是否存在明确的“日期”和“时间”列
+    # 智能处理时间与日期合并
     date_col = next((c for c in df.columns if "日期" in str(c)), None)
-    time_col_name = next((c for c in df.columns if str(c).strip() == "时间" or "时间" in str(c)), None)
+    time_col_name = next(
+        (
+            c
+            for c in df.columns
+            if str(c).strip() == "时间" or "时间" in str(c)
+        ),
+        None,
+    )
 
     if date_col and time_col_name and date_col != time_col_name:
         df[date_col] = df[date_col].ffill()
         try:
-            # 拼接成完整时间字符串并转为 datetime
-            combined_series = df[date_col].astype(str).str.strip() + " " + df[time_col_name].astype(str).str.strip()
+            # 核心修复：将形如 2026.9.13 的点号替换为标准的 2026-9-13
+            clean_dates = (
+                df[date_col]
+                .astype(str)
+                .str.strip()
+                .str.replace(".", "-", regex=False)
+            )
+            clean_times = df[time_col_name].astype(str).str.strip()
+            combined_series = clean_dates + " " + clean_times
+
             df["时间"] = pd.to_datetime(combined_series, errors="coerce")
         except Exception:
             pass
-        # 清理掉旧的独立日期列，避免干扰
         df = df.drop(columns=[date_col], errors="ignore")
     else:
-        # 如果只有单独的一个时间列，尝试直接转为 datetime
         for col in df.columns:
             if "时间" in str(col) or "time" in str(col).lower():
                 df[col] = pd.to_datetime(df[col], errors="coerce")
 
-    # 4. 自动剔除不需要的“班别”列
+    # 自动剔除不需要的“班别”列
     if "班别" in df.columns:
         df = df.drop(columns=["班别"], errors="ignore")
 
@@ -116,32 +127,27 @@ def load_and_process_data(active_paths):
                 read_errors = []
                 for encoding in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
                     try:
-                        # 兼容可能带有 2 行复合表头的 CSV
                         df = pd.read_csv(file_path, encoding=encoding, header=[0, 1])
                         break
                     except Exception as exc:
                         read_errors.append(f"{encoding}: {exc}")
                 
-                # 如果多层表头读取失败，退回到单行表头读取
                 if df is None:
                     try:
                         df = pd.read_csv(file_path, encoding="utf-8-sig")
                     except Exception as e:
                         raise ValueError(f"无法读取 CSV 文件 {Path(file_path).name}。错误：{e}")
             else:
-                # Excel 读取：自动适配多级表头（前 2 行）
                 try:
                     df = pd.read_excel(file_path, header=[0, 1])
                 except Exception:
                     df = pd.read_excel(file_path, header=0)
 
-            # 调用智能清洗函数
             df = _flatten_multiindex_headers(df)
             dataframes.append(df)
 
         df_raw = pd.concat(dataframes, ignore_index=True, sort=False)
         
-        # 清理列名空白字符
         columns = [str(c).strip() for c in df_raw.columns if str(c).strip() and "Unnamed" not in str(c)]
         return df_raw, columns
 

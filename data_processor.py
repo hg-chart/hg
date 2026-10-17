@@ -51,51 +51,127 @@ def load_and_process_data(active_paths):
 
 
 def render_column_and_filter_config(columns):
-    """渲染数据列选择、坐标轴自定义命名和动态交互式指标过滤配置"""
+    """渲染数据列选择、坐标轴自定义命名、工厂持久化记忆与修改按钮控制"""
+    
+    # 获取当前选中的工厂名称（用于实现按工厂隔离保存配置）
+    current_factory = st.session_state.get("selected_factory", "default_factory")
+    config_state_key = f"config_locked_{current_factory}"
+    
+    # 初始化该工厂的锁定状态（默认如果已有缓存配置则为锁定状态 True）
+    cache_key_prefix = f"factory_cfg_{current_factory}"
+    has_cached_config = cache_key_prefix in st.session_state
+    
+    if config_state_key not in st.session_state:
+        st.session_state[config_state_key] = has_cached_config
+
     st.subheader("2. 数据列选择与坐标轴命名配置")
-    
-    default_load_index = min(1, len(columns) - 1)
-    if "W3.UNIT1.10DEHDCSAI03" in columns:
-        default_load_index = columns.index("W3.UNIT1.10DEHDCSAI03")
 
-    # 第一行：自定义名称输入框（蓝色椭圆框对应的变量名称）
-    col1_top, col2_top, col3_top = st.columns(3)
-    with col1_top:
-        time_custom_label = st.text_input("横轴自定义名称", value="", placeholder="留空则默认取字段名")
-    with col2_top:
-        load_custom_label = st.text_input("左纵轴自定义名称", value="", placeholder="留空则默认取字段名")
-    with col3_top:
-        pressure_custom_label = st.text_input("右纵轴自定义名称", value="", placeholder="留空则默认取字段名")
+    # 如果处于锁定（已保存）状态，且存在缓存配置，则直接展示摘要并提供“修改”按钮
+    if st.session_state[config_state_key] and has_cached_config:
+        cfg = st.session_state[cache_key_prefix]
+        
+        # 优雅展示当前已保存的配置
+        info_col1, info_col2, info_col3, btn_col = st.columns([2, 2, 2, 1])
+        with info_col1:
+            st.markdown(f"**横轴**：`{cfg['time_custom'] or cfg['time_col']}` (`{cfg['time_col']}`)")
+        with info_col2:
+            st.markdown(f"**左纵轴**：`{cfg['load_custom'] or cfg['load_col']}` (`{cfg['load_col']}`)")
+        with info_col3:
+            st.markdown(f"**右纵轴**：`{cfg['pressure_custom'] or cfg['pressure_col']}` (`{cfg['pressure_col']}`)")
+        with btn_col:
+            if st.button("✏️ 修改", key=f"btn_edit_cfg_{current_factory}", type="secondary", use_container_width=True):
+                st.session_state[config_state_key] = False
+                st.rerun()
+                
+        # 直接赋缓存值
+        time_col = cfg["time_col"]
+        load_col = cfg["load_col"]
+        pressure_col = cfg["pressure_col"]
+        final_time_label = cfg["final_time_label"]
+        final_load_label = cfg["final_load_label"]
+        final_pressure_label = cfg["final_pressure_label"]
+        raw_load_label = cfg["raw_load_label"]
+        raw_pressure_label = cfg["raw_pressure_label"]
+        
+    else:
+        # 处于编辑或首次配置状态
+        st.info("💡 当前工厂尚未锁定配置，或者您正在进行修改。调整完成后点击下方“保存并锁定配置”即可记住此设置。")
+        
+        # 尝试读取历史缓存作为初始默认值
+        default_cfg = st.session_state.get(cache_key_prefix, {})
 
-    # 第二行：数据来源选择下拉框
-    col1_bot, col2_bot, col3_bot = st.columns(3)
-    with col1_bot:
-        time_col = st.selectbox("横坐标轴（时间列）请选择数据来源", columns, index=0)
-    with col2_bot:
-        load_col = st.selectbox("左纵轴请选择数据来源", columns, index=default_load_index)
-    with col3_bot:
-        pressure_col = st.selectbox("右纵轴请选择数据来源", columns, index=min(2, len(columns) - 1))
+        # 默认选中索引
+        default_load_index = min(1, len(columns) - 1)
+        saved_load = default_cfg.get("load_col")
+        if saved_load in columns:
+            default_load_index = columns.index(saved_load)
+        elif "W3.UNIT1.10DEHDCSAI03" in columns:
+            default_load_index = columns.index("W3.UNIT1.10DEHDCSAI03")
 
-    # 动态计算最终显示名称
-    final_time_label = time_custom_label.strip() if time_custom_label.strip() else time_col
-    
-    raw_load_label = load_custom_label.strip() if load_custom_label.strip() else load_col
-    final_load_label = f"{raw_load_label}（{load_col}）"
+        default_time_index = 0
+        saved_time = default_cfg.get("time_col")
+        if saved_time in columns:
+            default_time_index = columns.index(saved_time)
 
-    raw_pressure_label = pressure_custom_label.strip() if pressure_custom_label.strip() else pressure_col
-    final_pressure_label = f"{raw_pressure_label}（{pressure_col}）"
+        default_press_index = min(2, len(columns) - 1)
+        saved_press = default_cfg.get("pressure_col")
+        if saved_press in columns:
+            default_press_index = columns.index(saved_press)
 
-    # 第三部分：交互式选择要过滤的目标变量（从上方定义的变量中选择）
+        # 第一行：自定义名称输入框
+        col1_top, col2_top, col3_top = st.columns(3)
+        with col1_top:
+            time_custom_label = st.text_input("横轴自定义名称", value=default_cfg.get("time_custom", ""), placeholder="留空则默认取字段名")
+        with col2_top:
+            load_custom_label = st.text_input("左纵轴自定义名称", value=default_cfg.get("load_custom", ""), placeholder="留空则默认取字段名")
+        with col3_top:
+            pressure_custom_label = st.text_input("右纵轴自定义名称", value=default_cfg.get("pressure_custom", ""), placeholder="留空则默认取字段名")
+
+        # 第二行：数据来源选择下拉框
+        col1_bot, col2_bot, col3_bot = st.columns(3)
+        with col1_bot:
+            time_col = st.selectbox("横坐标轴（时间列）请选择数据来源", columns, index=default_time_index)
+        with col2_bot:
+            load_col = st.selectbox("左纵轴请选择数据来源", columns, index=default_load_index)
+        with col3_bot:
+            pressure_col = st.selectbox("右纵轴请选择数据来源", columns, index=default_press_index)
+
+        # 动态计算显示名称
+        final_time_label = time_custom_label.strip() if time_custom_label.strip() else time_col
+        
+        raw_load_label = load_custom_label.strip() if load_custom_label.strip() else load_col
+        final_load_label = f"{raw_load_label}（{load_col}）"
+
+        raw_pressure_label = pressure_custom_label.strip() if pressure_custom_label.strip() else pressure_col
+        final_pressure_label = f"{raw_pressure_label}（{pressure_col}）"
+
+        if st.button("💾 保存并锁定当前配置", key=f"btn_save_cfg_{current_factory}", type="primary"):
+            st.session_state[cache_key_prefix] = {
+                "time_col": time_col,
+                "load_col": load_col,
+                "pressure_col": pressure_col,
+                "time_custom": time_custom_label,
+                "load_custom": load_custom_label,
+                "pressure_custom": pressure_custom_label,
+                "final_time_label": final_time_label,
+                "final_load_label": final_load_label,
+                "final_pressure_label": final_pressure_label,
+                "raw_load_label": raw_load_label,
+                "raw_pressure_label": raw_pressure_label,
+            }
+            st.session_state[config_state_key] = True
+            st.success("配置已成功保存并针对当前工厂锁定！后续登录将自动应用。")
+            st.rerun()
+
+    # 第三部分：交互式选择要过滤的目标变量
     st.subheader("3. 数据过滤配置（可选：支持单值下限或闭区间）")
     
-    # 提取可供选择的变量列表（左纵轴和右纵轴的自定义/字段名称）
     available_filter_metrics = [raw_load_label, raw_pressure_label]
     
     sel_col1, sel_col2 = st.columns([1, 2])
     with sel_col1:
         selected_filter_metric = st.selectbox("选择过滤目标变量", options=available_filter_metrics, index=0)
     
-    # 根据用户选择的过滤变量，自动映射到对应的实际数据列
     if selected_filter_metric == raw_load_label:
         filter_target_col = load_col
     else:

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（支持用户数据持久化与彻底防刷新掉线）"""
+"""设备运行数据分析系统 - 工厂安全隔离路由网关入口（支持用户数据持久化、彻底防刷新掉线与正常退出登录）"""
 
 import inspect
 import os
@@ -121,7 +121,7 @@ if "factory_trash" not in st.session_state:
   st.session_state["factory_trash"] = []
 
 # ============================================================
-# 2. 用户登录认证与防刷新掉线持久化
+# 2. 用户登录认证与防刷新掉线持久化（完美处理退出登录）
 # ============================================================
 authenticator = stauth.Authenticate(
     st.session_state["user_db"]["credentials"],
@@ -131,20 +131,33 @@ authenticator = stauth.Authenticate(
     auto_hash=True,
 )
 
-if "auth_status" in st.query_params and st.query_params["auth_status"] == "success":
-  if "logged_username" in st.query_params:
-    q_user = st.query_params["logged_username"]
-    if q_user in st.session_state["user_db"]["credentials"]["usernames"]:
-      st.session_state["username"] = q_user
-      st.session_state["authentication_status"] = True
-      if "name" not in st.session_state:
-        st.session_state["name"] = st.session_state["user_db"]["credentials"]["usernames"][q_user].get("name", q_user)
+# 🔴 关键修复：先判断当前认证状态是否为 False（即用户刚点击了“退出登录”）
+auth_status = st.session_state.get("authentication_status")
 
-is_logged_in = False
-if st.session_state.get("authentication_status") is True and st.session_state.get("username"):
-  is_logged_in = True
+if auth_status is False:
+  # 用户点击了退出：必须主动清空 URL 参数，防止被路由逻辑瞬间强行拉回登录状态
+  st.session_state.pop("username", None)
+  st.session_state.pop("name", None)
+  if len(st.query_params) > 0:
+    st.query_params.clear()
+  is_logged_in = False
+else:
+  # 正常流程：检查 URL 参数实现防刷新掉线
+  if "auth_status" in st.query_params and st.query_params["auth_status"] == "success":
+    if "logged_username" in st.query_params:
+      q_user = st.query_params["logged_username"]
+      if q_user in st.session_state["user_db"]["credentials"]["usernames"]:
+        st.session_state["username"] = q_user
+        st.session_state["authentication_status"] = True
+        if "name" not in st.session_state:
+          st.session_state["name"] = st.session_state["user_db"]["credentials"]["usernames"][q_user].get("name", q_user)
+
+  is_logged_in = False
+  if st.session_state.get("authentication_status") is True and st.session_state.get("username"):
+    is_logged_in = True
 
 if not is_logged_in:
+  # 未登录状态：渲染登录界面
   login_parameters = inspect.signature(authenticator.login).parameters
   if "form_name" in login_parameters:
     login_result = authenticator.login("请登录设备运行数据分析系统", "main")
@@ -273,7 +286,6 @@ user_manager.render_user_management(username, user_role, authenticator)
 selected_factory = factory_manager.render_factory_management(
     user_role, allowed_factories
 )
-# 🔴 核心修复：确保选中的工厂同步到 session_state 中供子模块读取
 st.session_state["selected_factory"] = selected_factory
 
 # ============================================================

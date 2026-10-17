@@ -96,8 +96,17 @@ st.markdown(
 # ============================================================
 # 1. 全局数据源初始化（完全依靠存储发现，无硬编码工厂）
 # ============================================================
-if "user_db" not in st.session_state:
-  st.session_state["user_db"] = user_manager.load_user_db()
+# 用户库以 R2 为准：未登录时每次运行都重新读取（保证新建 / 改密的账号立刻能登录），
+# 登录后沿用会话中的副本，管理员修改时由 user_manager 先写 R2 再更新。
+if "user_db" not in st.session_state or st.session_state.get("authentication_status") is not True:
+  try:
+    st.session_state["user_db"] = user_manager.load_user_db()
+  except user_manager.UserDBUnavailable as _exc:
+    if "user_db" not in st.session_state:
+      st.error(f"无法读取云端用户库，已停止加载以保护现有账号数据：{_exc}")
+      st.caption("请检查 R2 的网络与密钥权限后刷新页面重试。")
+      st.stop()
+    st.warning(f"云端用户库暂时读取失败，沿用本次会话中的副本：{_exc}")
 
 # ============================================================
 # 2. 用户登录认证与会话托管

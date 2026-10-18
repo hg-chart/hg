@@ -1,24 +1,64 @@
 # -*- coding: utf-8 -*-
-"""Cloudflare R2 存储桶专用操作模块"""
+"""Cloudflare R2 存储桶专用操作模块（按“当前会话选中的工厂”隔离）
 
-import os
+隔离原则（重要）：
+  - 本模块不再使用任何全局变量保存“当前工厂”。每次读写 R2，都从
+    st.session_state["selected_factory"] 取当前浏览器会话自己的工厂，
+    因此多人同时使用不同工厂、或同一人开多个窗口，都不会互相串数据。
+  - 没有选中工厂时，一律拒绝访问 R2（宁可报错，也不写到别的工厂里）。
+  - 任何指向其他工厂或系统目录（device-monitor/ 开头但不是当前工厂）的 Key 都会被拒绝。
+
+R2 内的存放约定（与已有数据兼容）：
+  device-monitor/<工厂>/uploaded_vault/<文件名>       数据文件
+  device-monitor/<工厂>/file_trash_vault/<文件名>     文件回收站
+  device-monitor/<工厂>/chart_history/<方案>/<图片>   历史图表
+"""
+
 import logging
+import os
+import shutil
 from pathlib import Path
+
 import streamlit as st
 
-BASE_PREFIX = "device-monitor/shanxihg/"
+ROOT_PREFIX = "device-monitor/"
+DATA_EXTS = (".csv", ".xlsx", ".xls")
+VAULT_KEY_DIR = "uploaded_vault"
+TRASH_KEY_DIR = "file_trash_vault"
+
+# 仅为兼容旧代码保留；已不再起任何作用（赋值给它不会改变访问的工厂）。
+BASE_PREFIX = ROOT_PREFIX
+
 _R2_CLIENT = None
 _R2_READY = False
 _R2_ERROR = ""
 
 
+# ------------------------------------------------------------
+# 当前工厂 / 前缀（来自会话，不是全局）
+# ------------------------------------------------------------
+def current_factory():
+  return st.session_state.get("selected_factory")
+
+
 def _get_active_prefix():
-  global BASE_PREFIX
-  if not BASE_PREFIX.endswith("/"):
-    BASE_PREFIX += "/"
-  return BASE_PREFIX
+  factory = current_factory()
+  if not factory or "/" in str(factory) or str(factory).startswith("_"):
+    raise RuntimeError("当前没有选中有效的工厂，已拒绝访问 R2，防止数据串到其他工厂。")
+  return f"{ROOT_PREFIX}{factory}/"
 
 
+def vault_key(name):
+  return f"{VAULT_KEY_DIR}/{name}"
+
+
+def trash_key(name):
+  return f"{TRASH_KEY_DIR}/{name}"
+
+
+# ------------------------------------------------------------
+# 客户端
+# ------------------------------------------------------------
 def _get_r2_client():
   global _R2_CLIENT, _R2_READY, _R2_ERROR
   if _R2_CLIENT is not None:
@@ -50,31 +90,31 @@ def _get_r2_client():
         ),
     )
 
-    # 【终极底层拦截魔法】：
-    # 动态劫持 boto3 客户端的 get_object 和 delete_object 方法。
-    # 无论任何外部模块（包括原版 main_dashboard.py）传入什么奇奇怪怪的带虚拟前缀的 Key，
-    # 在真正发给 R2 服务器之前，全部在这里被自动清洗并转化为正确的绝对路径！
+    # get_object / delete_object 的 Key 统一经过 _r2_key 清洗并加上“当前会话工厂”的前缀，
+    # 同时拒绝指向其他工厂的 Key。
     orig_get_object = client.get_object
+
     def safe_get_object(*args, **kwargs):
-        if "Key" in kwargs:
-            k = kwargs["Key"]
-            kwargs["Key"] = _r2_key(k)
-        return orig_get_object(*args, **kwargs)
+      if "Key" in kwargs:
+        kwargs["Key"] = _r2_key(kwargs["Key"])
+      return orig_get_object(*args, **kwargs)
+
     client.get_object = safe_get_object
 
     orig_delete_object = client.delete_object
+
     def safe_delete_object(*args, **kwargs):
-        if "Key" in kwargs:
-            k = kwargs["Key"]
-            kwargs["Key"] = _r2_key(k)
-        return orig_delete_object(*args, **kwargs)
+      if "Key" in kwargs:
+        kwargs["Key"] = _r2_key(kwargs["Key"])
+      return orig_delete_object(*args, **kwargs)
+
     client.delete_object = safe_delete_object
 
     _R2_CLIENT = client
     _R2_READY = True
     _R2_ERROR = ""
     return _R2_CLIENT
-  except Exception as exc:
+  except Exception as exc:  # noqa: BLE001
     _R2_ERROR = str(exc)
     _R2_READY = False
     return None
@@ -89,23 +129,22 @@ def _r2_bucket():
 
 
 def _r2_key(local_path_or_key):
-  """万能路径清洗函数：安全去除所有冗余前缀和虚拟标签，拼出完美的真实 R2 Key"""
+  """把本地路径或相对 Key 变成真实 R2 Key：一律落在“当前会话工厂”的目录下。"""
   value = str(local_path_or_key).replace("\\", "/").lstrip("/")
-  
-  # 剥离可能存在的各种虚拟前缀
-  for prefix_to_strip in ["x/", "dummy/", "device-monitor/shanxihg/"]:
-      # 注意：只有当后面确实包含关键路径时才剥离，避免误杀
-      if value.startswith(prefix_to_strip) and not value == prefix_to_strip:
-          # 如果已经包含了当前工厂前缀，先剥离干净再重新拼接
-          value = value[len(prefix_to_strip):]
-
   current_prefix = _get_active_prefix()
-  # 如果清理后已经是完整前缀开头，直接返回
   if value.startswith(current_prefix):
-      return value
+    return value
+  if value.startswith(ROOT_PREFIX):
+    raise ValueError(f"拒绝访问其他工厂或系统目录的对象：{value}")
+  for legacy in ("x/", "dummy/"):
+    if value.startswith(legacy) and value != legacy:
+      value = value[len(legacy):]
   return current_prefix + value.lstrip("/")
 
 
+# ------------------------------------------------------------
+# 基本读写
+# ------------------------------------------------------------
 def r2_upload_file(local_path, key=None):
   client = _get_r2_client()
   if client is None:
@@ -114,7 +153,7 @@ def r2_upload_file(local_path, key=None):
     full_key = _r2_key(key or local_path)
     client.upload_file(str(local_path), _r2_bucket(), full_key)
     return True
-  except Exception as exc:
+  except Exception as exc:  # noqa: BLE001
     logging.exception("上传到 Cloudflare R2 失败：%s", exc)
     return False
 
@@ -126,94 +165,138 @@ def r2_delete_key(key):
   try:
     client.delete_object(Bucket=_r2_bucket(), Key=key)
     return True
-  except Exception as exc:
+  except Exception as exc:  # noqa: BLE001
     logging.exception("删除 Cloudflare R2 对象失败：%s", exc)
     return False
 
 
+def _list_all_keys(client, prefix):
+  keys, token = [], None
+  while True:
+    kwargs = {"Bucket": _r2_bucket(), "Prefix": prefix}
+    if token:
+      kwargs["ContinuationToken"] = token
+    response = client.list_objects_v2(**kwargs)
+    keys.extend(item["Key"] for item in response.get("Contents", []))
+    if not response.get("IsTruncated"):
+      return keys
+    token = response.get("NextContinuationToken")
+
+
+def _classify(rel):
+  """按相对路径把对象分为 chart / trash / vault；其他（如 json 元数据）返回 None。"""
+  parts = rel.split("/")
+  name = parts[-1]
+  if not name:
+    return None
+  if "chart_history" in parts[:-1]:
+    return "chart"
+  if not name.lower().endswith(DATA_EXTS):
+    return None
+  if any("trash" in p.lower() for p in parts[:-1]):
+    return "trash"
+  return "vault"
+
+
+def r2_delete_files_by_name(name, trash=False):
+  """在“当前工厂”目录内，删除所有同名数据文件（不管历史上以哪种路径存放）。返回删除个数。"""
+  client = _get_r2_client()
+  if client is None:
+    return 0
+  try:
+    prefix = _get_active_prefix()
+    wanted = "trash" if trash else "vault"
+    deleted = 0
+    for key in _list_all_keys(client, prefix):
+      rel = key[len(prefix):]
+      if rel.split("/")[-1] == name and _classify(rel) == wanted:
+        client.delete_object(Bucket=_r2_bucket(), Key=key)
+        deleted += 1
+    return deleted
+  except Exception as exc:  # noqa: BLE001
+    logging.exception("按文件名删除 R2 对象失败：%s", exc)
+    return 0
+
+
 def r2_list_keys():
+  """列出“当前工厂”目录下的对象（图表 Key 以 x/ 开头，配合 cloud_chart_manager 的解析）。"""
   client = _get_r2_client()
   if client is None:
     return None
   try:
+    prefix = _get_active_prefix()
     keys = []
-    token = None
-    current_prefix = _get_active_prefix()
-    while True:
-      kwargs = {"Bucket": _r2_bucket(), "Prefix": current_prefix}
-      if token:
-        kwargs["ContinuationToken"] = token
-      response = client.list_objects_v2(**kwargs)
-      
-      for item in response.get("Contents", []):
-        k = item["Key"]
-        if k.startswith(current_prefix):
-          rel = k[len(current_prefix):]
-          # 完美配合原版 main_dashboard.py 的 parts[2] 方案名、parts[3] 文件名索引
-          if "chart_history/" in rel:
-            k_adjusted = "x/" + rel
-          else:
-            k_adjusted = rel
-          keys.append(k_adjusted)
-        else:
-          keys.append(k)
-
-      if not response.get("IsTruncated"):
-        break
-      token = response.get("NextContinuationToken")
+    for k in _list_all_keys(client, prefix):
+      rel = k[len(prefix):]
+      keys.append("x/" + rel if "chart_history/" in rel else rel)
     return keys
-  except Exception as exc:
+  except Exception as exc:  # noqa: BLE001
     logging.exception("列举 Cloudflare R2 对象失败：%s", exc)
     return None
 
 
+# ------------------------------------------------------------
+# 同步：本地目录 = 当前工厂在 R2 里的数据
+# ------------------------------------------------------------
 def sync_local_storage_with_r2(vault_dir, file_trash_dir, chart_history_dir):
-  """启动时同步：精准从当前工厂的云端目录拉取文件到本地"""
+  """让本地文件库与“当前工厂”的 R2 目录一致。
+
+  - R2 有、本地没有的数据文件：下载。
+  - 本地有、R2 里没有的数据文件：不属于当前工厂的云端数据（可能是历史上串进来的），
+    不会被删除，而是移入 _quarantine_<工厂>/ 隔离区，并记录到
+    st.session_state["_sync_quarantined"]，由页面提示。
+  - 历史图表不再下载到本地（页面直接从 R2 读取），避免多个工厂的图表混在同一目录。
+  """
   client = _get_r2_client()
   if client is None:
     return False
-
   try:
-    raw_keys = []
-    token = None
-    current_prefix = _get_active_prefix()
-    while True:
-      kwargs = {"Bucket": _r2_bucket(), "Prefix": current_prefix}
-      if token:
-        kwargs["ContinuationToken"] = token
-      response = client.list_objects_v2(**kwargs)
-      raw_keys.extend(item["Key"] for item in response.get("Contents", []))
-      if not response.get("IsTruncated"):
-        break
-      token = response.get("NextContinuationToken")
-  except Exception:
+    prefix = _get_active_prefix()
+    factory = current_factory()
+    all_keys = _list_all_keys(client, prefix)
+  except Exception:  # noqa: BLE001
+    logging.exception("同步前列举 R2 对象失败")
     return False
 
-  os.makedirs(vault_dir, exist_ok=True)
-  os.makedirs(file_trash_dir, exist_ok=True)
-  os.makedirs(chart_history_dir, exist_ok=True)
+  for d in (vault_dir, file_trash_dir, chart_history_dir):
+    os.makedirs(d, exist_ok=True)
 
-  for remote_key in raw_keys:
-    if remote_key.endswith("/"):
-      continue
-    
-    rel = remote_key[len(current_prefix):]
-    if not rel:
-      continue
+  want = {"vault": {}, "trash": {}}
+  for key in all_keys:
+    rel = key[len(prefix):]
+    kind = _classify(rel)
+    if kind in want:
+      want[kind].setdefault(rel.split("/")[-1], key)
 
-    if "chart_history/" in rel:
-      local_target = Path(rel)
-    elif "trash" in rel:
-      local_target = Path(file_trash_dir) / rel.split("/")[-1]
-    else:
-      local_target = Path(vault_dir) / rel.split("/")[-1]
-
-    if not local_target.exists():
+  for kind, local_dir in (("vault", vault_dir), ("trash", file_trash_dir)):
+    for name, key in want[kind].items():
+      target = Path(local_dir) / name
+      if target.exists():
+        continue
       try:
-        local_target.parent.mkdir(parents=True, exist_ok=True)
-        response = client.get_object(Bucket=_r2_bucket(), Key=remote_key)
-        local_target.write_bytes(response["Body"].read())
-      except Exception:
-        pass
+        data = client.get_object(Bucket=_r2_bucket(), Key=key)["Body"].read()
+        tmp = target.with_name(target.name + ".part")
+        tmp.write_bytes(data)
+        tmp.replace(target)
+      except Exception:  # noqa: BLE001
+        logging.exception("从 R2 下载失败：%s", key)
 
+  quarantine_root = Path(f"_quarantine_{factory}")
+  moved = []
+  for kind, local_dir in (("vault", vault_dir), ("trash", file_trash_dir)):
+    for item in Path(local_dir).iterdir():
+      if (
+          item.is_file()
+          and item.name.lower().endswith(DATA_EXTS)
+          and item.name not in want[kind]
+      ):
+        dest_dir = quarantine_root / Path(local_dir).name
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / item.name
+        if dest.exists():
+          dest.unlink()
+        shutil.move(str(item), str(dest))
+        moved.append(item.name)
+
+  st.session_state[f"_sync_quarantined_{factory}"] = moved
   return True

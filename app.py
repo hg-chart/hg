@@ -324,44 +324,12 @@ if not selected_factory:
   st.stop()
 
 # ============================================================
-# 4. R2 存储与工厂隔离桥接
+# 4. 工厂隔离说明
 # ============================================================
-r2_prefix = f"device-monitor/{selected_factory}/"
-r2_storage.BASE_PREFIX = r2_prefix
-
-factory_vault = f"uploaded_vault_{selected_factory}"
-factory_trash = f"file_trash_{selected_factory}"
-factory_chart = f"chart_history_{selected_factory}"
-
-os.makedirs(factory_vault, exist_ok=True)
-os.makedirs(factory_trash, exist_ok=True)
-os.makedirs(factory_chart, exist_ok=True)
-
-if r2_storage._get_r2_client() is not None:
-  sync_key = f"_r2_synced_{selected_factory}"
-  if not st.session_state.get(sync_key, False):
-    with st.spinner(f"正在加载 [{selected_factory}] 的云端数据..."):
-      r2_storage.sync_local_storage_with_r2(
-          factory_vault, factory_trash, factory_chart
-      )
-    st.session_state[sync_key] = True
-
-standard_vault = "uploaded_vault"
-
-try:
-  if os.path.lexists(standard_vault):
-    if os.path.islink(standard_vault) or os.path.isfile(standard_vault):
-      os.unlink(standard_vault)
-    else:
-      shutil.rmtree(standard_vault, ignore_errors=True)
-except Exception:
-  pass
-
-try:
-  if not os.path.exists(standard_vault):
-    os.symlink(factory_vault, standard_vault, target_is_directory=True)
-except Exception:
-  pass
+# 当前工厂只保存在本浏览器会话的 st.session_state["selected_factory"] 里。
+# 文件库目录、回收站、图表目录以及 R2 前缀，全部由它推导（见 main_dashboard.py / r2_storage.py）。
+# 不再使用全局软链接 uploaded_vault 和全局变量 r2_storage.BASE_PREFIX：
+# 它们是整个服务器共用的，多人同时使用不同工厂时会互相串数据。
 
 # ============================================================
 # 5. 沙箱隔离运行仪表盘主脚本

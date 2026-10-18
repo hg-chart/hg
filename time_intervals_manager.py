@@ -15,6 +15,7 @@ import logging
 from datetime import datetime, timedelta
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 import factory_registry as freg
 import data_processor
 
@@ -60,9 +61,14 @@ def _read_json(vault_dir, file_name):
             status, text = freg.get_text(key)
             if status == "ok":
                 try:
-                    return json.loads(text)
+                    data = json.loads(text)
                 except Exception:
                     logging.exception("R2 中的 %s 内容损坏", key)
+                    continue
+                if key != candidates[0]:
+                    # 旧版本把它存在了别的位置：补一份到统一位置（旧文件原样保留，不删除）
+                    freg.put_text(candidates[0], text)
+                return data
             elif status in ("error", "offline"):
                 break
     path = os.path.join(local_dir, file_name)
@@ -120,6 +126,78 @@ def load_trash_bin(vault_dir):
 
 def save_trash_bin(trash, vault_dir):
     return _write_json(vault_dir, TRASH_FILE_NAME, trash)
+
+
+_DT_UNITS = [("年", 4), ("月", 2), ("日", 2), ("时", 2), ("分", 2), ("秒", 2)]
+
+_DT_ROW_CSS = """
+<style>
+/* 一行紧凑输入：年 月 日 时 分 秒，手机上也不换行 */
+.st-key-dt_inputs_box [data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; gap: 0.2rem !important; align-items: center; }
+.st-key-dt_inputs_box [data-testid="stColumn"], .st-key-dt_inputs_box [data-testid="column"] { min-width: 0 !important; }
+.st-key-dt_inputs_box input { padding: 0.35rem 0.15rem !important; text-align: center; }
+.st-key-dt_inputs_box [data-testid="stMarkdownContainer"] p { margin: 0; text-align: center; white-space: nowrap; }
+</style>
+"""
+
+# 输入满位数后自动跳到下一格（只是锦上添花；脚本失败时不影响使用，按 Tab 键同样可以切换）
+_DT_AUTOJUMP_JS = """
+<script>
+(function () {
+  try {
+    const doc = window.parent.document;
+    function setup() {
+      const box = doc.querySelector('.st-key-dt_inputs_box');
+      if (!box) return;
+      const inputs = Array.from(box.querySelectorAll('input[type="text"]'));
+      inputs.forEach(function (el, i) {
+        if (el.dataset.autojump) return;
+        el.dataset.autojump = '1';
+        el.addEventListener('focus', function () { el.select(); });
+        el.addEventListener('input', function () {
+          const max = parseInt(el.getAttribute('maxlength') || '0', 10);
+          if (max && el.value.length >= max && inputs[i + 1]) { inputs[i + 1].focus(); }
+        });
+      });
+    }
+    setup();
+    new MutationObserver(setup).observe(doc.body, { childList: true, subtree: true });
+  } catch (e) {}
+})();
+</script>
+"""
+
+
+def _dt_row(label, default_dt, key_prefix):
+    """渲染一行：开始/结束：[2026]年[08]月[01]日[01]时[01]分[00]秒；返回六个格子里的文字。"""
+    widths = [1.0] + [1.7, 0.5] + [1.0, 0.5] * 5
+    cols = st.columns(widths)
+    cols[0].markdown(f"**{label}：**")
+    values = []
+    parts = [default_dt.year, default_dt.month, default_dt.day,
+             default_dt.hour, default_dt.minute, default_dt.second]
+    for i, ((unit, max_chars), part) in enumerate(zip(_DT_UNITS, parts)):
+        with cols[1 + 2 * i]:
+            values.append(st.text_input(
+                unit, value=f"{part:0{max_chars}d}", max_chars=max_chars,
+                key=f"{key_prefix}_{unit}", label_visibility="collapsed",
+            ))
+        cols[2 + 2 * i].markdown(unit)
+    return values
+
+
+def _fields_to_datetime(values, name):
+    """把六个格子的文字变成 datetime；时/分/秒留空按 0 处理。"""
+    year, month, day, hour, minute, second = [str(v).strip() for v in values]
+    if not (year.isdigit() and month.isdigit() and day.isdigit()):
+        raise ValueError(f"{name}的年、月、日必须填写数字")
+    for unit, text in (("时", hour), ("分", minute), ("秒", second)):
+        if text and not text.isdigit():
+            raise ValueError(f"{name}的{unit}必须是数字")
+    try:
+        return datetime(int(year), int(month), int(day), int(hour or 0), int(minute or 0), int(second or 0))
+    except ValueError:
+        raise ValueError(f"{name}不是有效的日期时间（请检查：月 1-12、该月是否有这一天、时 0-23、分和秒 0-59）")
 
 
 def render_time_intervals_manager(vault_dir, df_raw, time_col):
@@ -377,48 +455,31 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
 
     with st.container(border=True):
         st.markdown("➕ **添加新时段**（自动智能衔接，支持秒级精准配置）")
+        _n_iv = len(st.session_state.intervals)
+        _sid = _scope_id(vault_dir)
+        st.markdown(_DT_ROW_CSS, unsafe_allow_html=True)
         with st.form("interval_form"):
-            st.markdown("📅 **开始时间**")
-            sc1, sc2, sc3, sc4 = st.columns([2.8, 1, 1, 1])
-            with sc1:
-                start_date = st.date_input("日期", value=default_start.date(), key="s_date", label_visibility="collapsed")
-            with sc2:
-                start_hour = st.number_input("时", min_value=0, max_value=23, value=default_start.hour, key="s_h")
-            with sc3:
-                start_minute = st.number_input("分", min_value=0, max_value=59, value=default_start.minute, key="s_m")
-            with sc4:
-                start_second = st.number_input("秒", min_value=0, max_value=59, value=default_start.second, key="s_s")
-
-            st.markdown("📅 **结束时间**")
-            ec1, ec2, ec3, ec4 = st.columns([2.8, 1, 1, 1])
-            with ec1:
-                end_date = st.date_input("日期", value=default_end.date(), key="e_date", label_visibility="collapsed")
-            with ec2:
-                end_hour = st.number_input("时 ", min_value=0, max_value=23, value=default_end.hour, key="e_h")
-            with ec3:
-                end_minute = st.number_input("分 ", min_value=0, max_value=59, value=default_end.minute, key="e_m")
-            with ec4:
-                end_second = st.number_input("秒 ", min_value=0, max_value=59, value=default_end.second, key="e_s")
+            try:
+                _dt_box = st.container(key="dt_inputs_box")
+            except TypeError:  # 旧版 Streamlit 不支持 key：功能照常，只是不应用紧凑样式
+                _dt_box = st.container()
+            with _dt_box:
+                start_fields = _dt_row("开始", default_start, f"s_{_sid}_{_n_iv}")
+                end_fields = _dt_row("结束", default_end, f"e_{_sid}_{_n_iv}")
 
             run_col, stop_col, btn_col = st.columns([2, 2, 1.5])
             with run_col:
-                run_seconds = st.text_input("多频集速运行秒数（填 0 表示多频集速没有运行）", value=_default_run, key=f"run_sec_in_{_scope_id(vault_dir)}_{len(st.session_state.intervals)}")
+                run_seconds = st.text_input("多频集速运行秒数（填 0 表示多频集速没有运行）", value=_default_run, key=f"run_sec_in_{_sid}_{_n_iv}")
             with stop_col:
-                stop_seconds = st.text_input("停止秒数（运行秒数若为0，此项不用填，系统自动设置为-）", value=_default_stop, key=f"stop_sec_in_{_scope_id(vault_dir)}_{len(st.session_state.intervals)}")
+                stop_seconds = st.text_input("停止秒数（运行秒数若为0，此项不用填，系统自动设置为-）", value=_default_stop, key=f"stop_sec_in_{_sid}_{_n_iv}")
             with btn_col:
                 st.write("")
                 add_interval = st.form_submit_button("添加时段", use_container_width=True)
 
             if add_interval:
                 try:
-                    start_dt = datetime(
-                        start_date.year, start_date.month, start_date.day,
-                        int(start_hour), int(start_minute), int(start_second)
-                    )
-                    end_dt = datetime(
-                        end_date.year, end_date.month, end_date.day,
-                        int(end_hour), int(end_minute), int(end_second)
-                    )
+                    start_dt = _fields_to_datetime(start_fields, "开始时间")
+                    end_dt = _fields_to_datetime(end_fields, "结束时间")
 
                     if start_dt >= end_dt:
                         st.error("开始时间必须早于结束时间！")
@@ -437,5 +498,6 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
                         st.rerun()
                 except Exception as exc:
                     st.error(f"时间格式错误：{exc}")
+        components.html(_DT_AUTOJUMP_JS, height=0)
 
     st.markdown("---")

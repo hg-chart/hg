@@ -84,22 +84,41 @@ st.markdown("---")
 # ============================================================
 # 初始化存储路径与 R2 云端同步
 # ============================================================
-VAULT_DIR = "uploaded_vault"
-FILE_TRASH_DIR = "file_trash_vault"
-CHART_HISTORY_DIR = "chart_history"
-CHART_TRASH_DIR = "chart_trash_vault"
+# 工厂隔离：所有目录都由“当前会话选中的工厂”推导，不再使用任何全局共用目录或软链接
+factory = st.session_state.get("selected_factory")
+if not factory:
+    st.error("尚未选择工厂，已停止加载（防止不同工厂的数据混用）。请从系统入口进入并选择工厂。")
+    st.stop()
 
-os.makedirs(VAULT_DIR, exist_ok=True)
-os.makedirs(FILE_TRASH_DIR, exist_ok=True)
-os.makedirs(CHART_HISTORY_DIR, exist_ok=True)
-os.makedirs(CHART_TRASH_DIR, exist_ok=True)
+VAULT_DIR = f"uploaded_vault_{factory}"
+FILE_TRASH_DIR = f"file_trash_{factory}"
+CHART_HISTORY_DIR = f"chart_history_{factory}"
+CHART_TRASH_DIR = f"chart_trash_{factory}"
+
+for _d in (VAULT_DIR, FILE_TRASH_DIR, CHART_HISTORY_DIR, CHART_TRASH_DIR):
+    os.makedirs(_d, exist_ok=True)
+
+# 切换工厂时，清掉上一个工厂遗留的图表相关状态
+if st.session_state.get("_dash_scope") != factory:
+    st.session_state["_dash_scope"] = factory
+    for _k in ("plotted_fig_bytes", "current_pressure_col", "current_filter_metric"):
+        st.session_state.pop(_k, None)
 
 if r2_storage._get_r2_client() is not None:
-    if not st.session_state.get("_r2_initial_sync_done", False):
-        with st.spinner("正在连接 Cloudflare R2 存储桶并同步历史文件……"):
-            r2_storage.sync_local_storage_with_r2(VAULT_DIR, FILE_TRASH_DIR, CHART_HISTORY_DIR)
-        st.session_state["_r2_initial_sync_done"] = True
-    st.caption("☁️ Cloudflare R2 存储桶：已连接（私有存储）")
+    _sync_key = f"_r2_synced_{factory}"
+    if not st.session_state.get(_sync_key, False):
+        with st.spinner(f"正在同步工厂【{factory}】的云端文件……"):
+            _ok = r2_storage.sync_local_storage_with_r2(VAULT_DIR, FILE_TRASH_DIR, CHART_HISTORY_DIR)
+        if _ok:
+            st.session_state[_sync_key] = True
+    st.caption(f"☁️ Cloudflare R2 存储桶：已连接（私有存储）｜当前工厂：{factory}")
+    _quarantined = st.session_state.get(f"_sync_quarantined_{factory}") or []
+    if _quarantined:
+        with st.expander(f"⚠️ 已隔离 {len(_quarantined)} 个不属于本工厂云端目录的本地文件", expanded=False):
+            st.write("这些文件不在工厂【" + factory + "】的 R2 目录里，已从文件库移出，避免混入分析。"
+                     "文件没有被删除，存放在服务器的 _quarantine_" + factory + " 文件夹中：")
+            for _n in _quarantined:
+                st.text(f"📄 {_n}")
 else:
     r2_err = r2_storage.get_r2_error()
     st.warning("Cloudflare R2 尚未连接，当前使用本地临时存储。" + (f" 提示：{r2_err}" if r2_err else ""))

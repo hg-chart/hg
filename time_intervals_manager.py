@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import streamlit as st
 import factory_registry as freg
+import data_processor
 
 TEMPLATES_FILE_NAME = "templates_vault.json"
 TRASH_FILE_NAME = "trash_vault.json"
@@ -360,11 +361,7 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
             pass
     else:
         try:
-            parsed = pd.to_datetime(
-                df_raw[time_col].astype(str).str.strip(),
-                format="mixed",
-                errors="coerce",
-            )
+            parsed = data_processor.parse_datetime_series(df_raw[time_col])
             earliest = parsed.min()
             if pd.notna(earliest):
                 default_start = earliest.to_pydatetime()

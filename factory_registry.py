@@ -334,3 +334,41 @@ def purge_factory(name):
     return False, f"R2 数据已删除，但更新工厂列表失败：{serr}", reg
   note = "（R2 未连接，未删除云端数据）" if err == "offline" else f"（已删除 {count} 个 R2 对象）"
   return True, f"工厂【{name}】已彻底删除{note}", reg
+
+
+# ------------------------------------------------------------
+# 数据隔离检查（管理员用）：看各工厂 R2 目录里有哪些文件，以及哪些文件同时出现在多个工厂
+# ------------------------------------------------------------
+def scan_factory_files():
+  """返回 (结果, 错误)。结果：{"factories": {工厂: {"vault": [...], "trash": [...], "charts": 数量}},
+  "duplicates": {文件名: [工厂, ...]}}。R2 未连接或失败时结果为 None。"""
+  client, bucket, _err = _build_client()
+  if client is None:
+    return None, "R2 未连接"
+  try:
+    paginator = client.get_paginator("list_objects_v2")
+    factories = {}
+    for page in paginator.paginate(Bucket=bucket, Prefix=ROOT_PREFIX):
+      for obj in page.get("Contents", []):
+        rel = obj["Key"][len(ROOT_PREFIX):]
+        factory, _, sub = rel.partition("/")
+        if not factory or factory.startswith("_") or not sub:
+          continue
+        parts = sub.split("/")
+        name = parts[-1]
+        entry = factories.setdefault(factory, {"vault": [], "trash": [], "charts": 0})
+        if "chart_history" in parts[:-1]:
+          entry["charts"] += 1
+        elif name.lower().endswith((".csv", ".xlsx", ".xls")):
+          kind = "trash" if any("trash" in p.lower() for p in parts[:-1]) else "vault"
+          if name not in entry[kind]:
+            entry[kind].append(name)
+    owners = {}
+    for factory, entry in factories.items():
+      for name in set(entry["vault"]) | set(entry["trash"]):
+        owners.setdefault(name, []).append(factory)
+    duplicates = {n: sorted(f) for n, f in owners.items() if len(f) > 1}
+    return {"factories": factories, "duplicates": duplicates}, ""
+  except Exception as exc:  # noqa: BLE001
+    logging.exception("扫描 R2 工厂目录失败")
+    return None, str(exc)

@@ -17,6 +17,7 @@ R2 内的存放约定（与已有数据兼容）：
 import logging
 import os
 import shutil
+import time
 from pathlib import Path
 
 import streamlit as st
@@ -46,6 +47,20 @@ def _get_active_prefix():
   if not factory or "/" in str(factory) or str(factory).startswith("_"):
     raise RuntimeError("当前没有选中有效的工厂，已拒绝访问 R2，防止数据串到其他工厂。")
   return f"{ROOT_PREFIX}{factory}/"
+
+
+# 云端对象列表缓存（按会话、按工厂）：Streamlit 每次交互都会重跑脚本，
+# 如果每次都去 R2 列一遍对象，页面会明显变慢。上传 / 删除 / 同步后会自动失效，
+# 也可以点页面上的“刷新云端图片列表”强制刷新。
+KEY_CACHE_TTL_SECONDS = 120
+
+
+def _key_cache_name():
+  return f"_r2_keys_cache_{current_factory()}"
+
+
+def invalidate_key_cache():
+  st.session_state.pop(_key_cache_name(), None)
 
 
 def vault_key(name):
@@ -152,6 +167,7 @@ def r2_upload_file(local_path, key=None):
   try:
     full_key = _r2_key(key or local_path)
     client.upload_file(str(local_path), _r2_bucket(), full_key)
+    invalidate_key_cache()
     return True
   except Exception as exc:  # noqa: BLE001
     logging.exception("上传到 Cloudflare R2 失败：%s", exc)
@@ -164,6 +180,7 @@ def r2_delete_key(key):
     return False
   try:
     client.delete_object(Bucket=_r2_bucket(), Key=key)
+    invalidate_key_cache()
     return True
   except Exception as exc:  # noqa: BLE001
     logging.exception("删除 Cloudflare R2 对象失败：%s", exc)
@@ -212,23 +229,30 @@ def r2_delete_files_by_name(name, trash=False):
       if rel.split("/")[-1] == name and _classify(rel) == wanted:
         client.delete_object(Bucket=_r2_bucket(), Key=key)
         deleted += 1
+    if deleted:
+      invalidate_key_cache()
     return deleted
   except Exception as exc:  # noqa: BLE001
     logging.exception("按文件名删除 R2 对象失败：%s", exc)
     return 0
 
 
-def r2_list_keys():
-  """列出“当前工厂”目录下的对象（图表 Key 以 x/ 开头，配合 cloud_chart_manager 的解析）。"""
+def r2_list_keys(force=False):
+  """列出“当前工厂”目录下的对象（图表 Key 以 x/ 开头，配合 cloud_chart_manager 的解析）。
+  结果缓存 KEY_CACHE_TTL_SECONDS 秒；force=True 时强制重新读取。"""
   client = _get_r2_client()
   if client is None:
     return None
   try:
     prefix = _get_active_prefix()
+    cache = st.session_state.get(_key_cache_name())
+    if not force and cache and time.time() - cache[0] < KEY_CACHE_TTL_SECONDS:
+      return cache[1]
     keys = []
     for k in _list_all_keys(client, prefix):
       rel = k[len(prefix):]
       keys.append("x/" + rel if "chart_history/" in rel else rel)
+    st.session_state[_key_cache_name()] = (time.time(), keys)
     return keys
   except Exception as exc:  # noqa: BLE001
     logging.exception("列举 Cloudflare R2 对象失败：%s", exc)
@@ -299,4 +323,5 @@ def sync_local_storage_with_r2(vault_dir, file_trash_dir, chart_history_dir):
         moved.append(item.name)
 
   st.session_state[f"_sync_quarantined_{factory}"] = moved
+  invalidate_key_cache()
   return True

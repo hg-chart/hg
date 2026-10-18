@@ -11,6 +11,23 @@ def render_file_manager(vault_dir, file_trash_dir):
     """渲染文件上传、选择及回收站管理界面，返回当前选中的文件路径列表"""
     st.subheader("1. 表格文件管理（支持上传和调用历史文件）")
 
+    # —— 工厂隔离：文件库目录必须就是“当前工厂”自己的目录 ——
+    factory = st.session_state.get("selected_factory")
+    if not factory:
+        st.error("尚未选择工厂，已停止加载文件库（防止不同工厂的数据混用）。")
+        st.stop()
+    if os.path.basename(os.path.normpath(vault_dir)) != f"uploaded_vault_{factory}":
+        st.error(f"文件库目录（{vault_dir}）与当前工厂【{factory}】不一致，已停止，防止数据串厂。")
+        st.stop()
+    os.makedirs(vault_dir, exist_ok=True)
+    os.makedirs(file_trash_dir, exist_ok=True)
+
+    # 切换工厂时，清空上一个工厂留下的勾选状态
+    if st.session_state.get("_fm_scope") != factory:
+        st.session_state["_fm_scope"] = factory
+        for _k in ("file_selections", "file_del_selections", "trash_del_selections"):
+            st.session_state[_k] = {}
+
     uploaded_files = st.file_uploader(
         "上传工业数据表格文件（CSV / XLSX / XLS）",
         type=["csv", "xlsx", "xls"],
@@ -18,14 +35,19 @@ def render_file_manager(vault_dir, file_trash_dir):
     )
 
     if uploaded_files:
+        upload_failed = []
         for uploaded_file in uploaded_files:
             safe_name = Path(uploaded_file.name).name
             target = os.path.join(vault_dir, safe_name)
             with open(target, "wb") as file:
                 file.write(uploaded_file.getbuffer())
             if r2_storage._get_r2_client() is not None:
-                r2_storage.r2_upload_file(target)
-        st.success("文件已成功保存到当前运行环境的文件库并同步至 Cloudflare R2。")
+                if not r2_storage.r2_upload_file(target, key=r2_storage.vault_key(safe_name)):
+                    upload_failed.append(safe_name)
+        if upload_failed:
+            st.warning("以下文件已保存到本地，但同步到 Cloudflare R2 失败：" + "、".join(upload_failed))
+        else:
+            st.success(f"文件已成功保存到工厂【{factory}】的文件库并同步至 Cloudflare R2。")
 
     existing_files = sorted(
         name for name in os.listdir(vault_dir)
@@ -51,7 +73,7 @@ def render_file_manager(vault_dir, file_trash_dir):
                     is_sel = st.checkbox(
                         "选择", 
                         value=st.session_state.file_selections.get(name, True), 
-                        key=f"file_chk_{name}", 
+                        key=f"file_chk_{factory}_{name}", 
                         label_visibility="collapsed"
                     )
                     st.session_state.file_selections[name] = is_sel
@@ -82,7 +104,7 @@ def render_file_manager(vault_dir, file_trash_dir):
                     d_sel = st.checkbox(
                         "删除选择", 
                         value=st.session_state.file_del_selections.get(name, False), 
-                        key=f"file_del_chk_{name}", 
+                        key=f"file_del_chk_{factory}_{name}", 
                         label_visibility="collapsed"
                     )
                     st.session_state.file_del_selections[name] = d_sel
@@ -98,8 +120,8 @@ def render_file_manager(vault_dir, file_trash_dir):
                         if os.path.exists(src_path):
                             shutil.move(src_path, dst_path)
                             if r2_storage._get_r2_client() is not None:
-                                r2_storage.r2_upload_file(dst_path)
-                                r2_storage.r2_delete_key(src_path.replace("\\", "/"))
+                                r2_storage.r2_upload_file(dst_path, key=r2_storage.trash_key(name))
+                                r2_storage.r2_delete_files_by_name(name, trash=False)
                             st.session_state.file_del_selections[name] = False
                             deleted_any = True
                 if deleted_any:
@@ -133,32 +155,32 @@ def render_file_manager(vault_dir, file_trash_dir):
                     t_sel = st.checkbox(
                         "回收站选择",
                         value=st.session_state.trash_del_selections.get(trash_name, False),
-                        key=f"trash_chk_{trash_name}",
+                        key=f"trash_chk_{factory}_{trash_name}",
                         label_visibility="collapsed"
                     )
                     st.session_state.trash_del_selections[trash_name] = t_sel
                 with tc2:
                     st.text(f"📄 {trash_name}")
                 with tc3:
-                    if st.button("♻️ 恢复", key=f"restore_file_{trash_name}", use_container_width=True):
+                    if st.button("♻️ 恢复", key=f"restore_file_{factory}_{trash_name}", use_container_width=True):
                         src_t_path = os.path.join(file_trash_dir, trash_name)
                         dst_v_path = os.path.join(vault_dir, trash_name)
                         if os.path.exists(src_t_path):
                             shutil.move(src_t_path, dst_v_path)
                             if r2_storage._get_r2_client() is not None:
-                                r2_storage.r2_upload_file(dst_v_path)
-                                r2_storage.r2_delete_key(src_t_path.replace("\\", "/"))
+                                r2_storage.r2_upload_file(dst_v_path, key=r2_storage.vault_key(trash_name))
+                                r2_storage.r2_delete_files_by_name(trash_name, trash=True)
                             if trash_name in st.session_state.file_selections:
                                 st.session_state.file_selections[trash_name] = True
                             st.success(f"已成功恢复文件：{trash_name}")
                             st.rerun()
                 with tc4:
-                    if st.button("🔥 彻底删除", key=f"perma_del_file_{trash_name}", use_container_width=True):
+                    if st.button("🔥 彻底删除", key=f"perma_del_file_{factory}_{trash_name}", use_container_width=True):
                         src_t_path = os.path.join(file_trash_dir, trash_name)
                         if os.path.exists(src_t_path):
                             os.remove(src_t_path)
                             if r2_storage._get_r2_client() is not None:
-                                r2_storage.r2_delete_key(src_t_path.replace("\\", "/"))
+                                r2_storage.r2_delete_files_by_name(os.path.basename(src_t_path), trash=True)
                             st.success(f"已彻底删除文件：{trash_name}")
                             st.rerun()
 
@@ -174,7 +196,7 @@ def render_file_manager(vault_dir, file_trash_dir):
                             if os.path.exists(src_t_path):
                                 os.remove(src_t_path)
                                 if r2_storage._get_r2_client() is not None:
-                                    r2_storage.r2_delete_key(src_t_path.replace("\\", "/"))
+                                    r2_storage.r2_delete_files_by_name(os.path.basename(src_t_path), trash=True)
                                 st.session_state.trash_del_selections[trash_name] = False
                                 perma_any = True
                     if perma_any:
@@ -189,7 +211,7 @@ def render_file_manager(vault_dir, file_trash_dir):
                         if os.path.exists(src_t_path):
                             os.remove(src_t_path)
                             if r2_storage._get_r2_client() is not None:
-                                r2_storage.r2_delete_key(src_t_path.replace("\\", "/"))
+                                r2_storage.r2_delete_files_by_name(os.path.basename(src_t_path), trash=True)
                     st.session_state.trash_del_selections = {}
                     st.success("已清空回收站！")
                     st.rerun()

@@ -11,6 +11,24 @@ def render_cloud_chart_manager(chart_history_dir, chart_trash_dir):
     st.markdown("---")
     st.subheader("☁️ 云端历史对比趋势图按来源与标签检索调用")
 
+    # —— 工厂隔离：图表目录必须是当前工厂自己的；切换工厂时清空上一个工厂的选择 ——
+    factory = st.session_state.get("selected_factory")
+    if not factory:
+        st.error("尚未选择工厂，已停止加载云端图表。")
+        return
+    if os.path.basename(os.path.normpath(chart_trash_dir)) != f"chart_trash_{factory}":
+        st.error(f"图片回收站目录（{chart_trash_dir}）与当前工厂【{factory}】不一致，已停止，防止数据串厂。")
+        return
+    os.makedirs(chart_history_dir, exist_ok=True)
+    os.makedirs(chart_trash_dir, exist_ok=True)
+    if st.session_state.get("_ccm_scope") != factory:
+        st.session_state["_ccm_scope"] = factory
+        for _k in ("active_chart_key", "active_chart_name", "active_chart_scheme",
+                   "active_chart_pressure", "active_chart_tag",
+                   "sel_scheme", "sel_pressure", "sel_tag"):
+            st.session_state.pop(_k, None)
+    st.caption(f"当前工厂：{factory}（只显示该工厂自己的历史图表）")
+
     if r2_storage._get_r2_client() is not None:
         if st.button("🔄 刷新云端图片列表", key="refresh_chart_list"):
             st.rerun()

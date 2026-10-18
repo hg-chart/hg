@@ -25,12 +25,14 @@ def render_cloud_chart_manager(chart_history_dir, chart_trash_dir):
         st.session_state["_ccm_scope"] = factory
         for _k in ("active_chart_key", "active_chart_name", "active_chart_scheme",
                    "active_chart_pressure", "active_chart_tag",
-                   "sel_scheme", "sel_pressure", "sel_tag"):
+                   "sel_scheme", "sel_pressure", "sel_tag", "_active_chart_cache"):
             st.session_state.pop(_k, None)
     st.caption(f"当前工厂：{factory}（只显示该工厂自己的历史图表）")
 
     if r2_storage._get_r2_client() is not None:
         if st.button("🔄 刷新云端图片列表", key="refresh_chart_list"):
+            r2_storage.invalidate_key_cache()
+            st.session_state.pop("_active_chart_cache", None)
             st.rerun()
             
         all_keys = r2_storage.r2_list_keys()
@@ -131,8 +133,14 @@ def render_cloud_chart_manager(chart_history_dir, chart_trash_dir):
                         
                         client = r2_storage._get_r2_client()
                         try:
-                            resp = client.get_object(Bucket=r2_storage._r2_bucket(), Key=target_key)
-                            img_bytes = resp["Body"].read()
+                            # 图片字节缓存在会话里，避免每次交互都重新从 R2 下载整张图
+                            _cache = st.session_state.get("_active_chart_cache")
+                            if _cache and _cache[0] == (factory, target_key):
+                                img_bytes = _cache[1]
+                            else:
+                                resp = client.get_object(Bucket=r2_storage._r2_bucket(), Key=target_key)
+                                img_bytes = resp["Body"].read()
+                                st.session_state["_active_chart_cache"] = ((factory, target_key), img_bytes)
                             
                             st.markdown("---")
                             st.image(img_bytes, caption=f"云端图片：{active_scheme} ➔ {active_pressure} ➔ {active_tag}", use_container_width=True)
@@ -155,6 +163,7 @@ def render_cloud_chart_manager(chart_history_dir, chart_trash_dir):
                                     
                                     r2_storage.r2_delete_key(target_key)
                                     st.session_state.pop("active_chart_key", None)
+                                    st.session_state.pop("_active_chart_cache", None)
                                     st.success("图片已成功移入回收站，并从当前方案目录彻底清除！")
                                     st.rerun()
                         except Exception as e:

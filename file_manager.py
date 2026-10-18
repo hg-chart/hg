@@ -28,15 +28,27 @@ def render_file_manager(vault_dir, file_trash_dir):
         for _k in ("file_selections", "file_del_selections", "trash_del_selections"):
             st.session_state[_k] = {}
 
+    # 上传框按工厂区分：切换工厂后是一个全新的空上传框，不会把上一个工厂上传框里的文件带进来
     uploaded_files = st.file_uploader(
         "上传工业数据表格文件（CSV / XLSX / XLS）",
         type=["csv", "xlsx", "xls"],
         accept_multiple_files=True,
+        key=f"file_uploader_{factory}",
     )
 
+    # Streamlit 会让上传框一直保留已上传的文件，每次页面刷新都能读到它。
+    # 所以每个文件只处理一次（按 file_id 记录），否则删除后下一次刷新又会被重新写回来。
+    processed = st.session_state.setdefault("_fm_processed_uploads", set())
     if uploaded_files:
-        upload_failed = []
+        upload_failed, saved_names = [], []
         for uploaded_file in uploaded_files:
+            upload_id = (
+                factory,
+                getattr(uploaded_file, "file_id", None)
+                or (uploaded_file.name, getattr(uploaded_file, "size", 0)),
+            )
+            if upload_id in processed:
+                continue
             safe_name = Path(uploaded_file.name).name
             target = os.path.join(vault_dir, safe_name)
             with open(target, "wb") as file:
@@ -44,9 +56,11 @@ def render_file_manager(vault_dir, file_trash_dir):
             if r2_storage._get_r2_client() is not None:
                 if not r2_storage.r2_upload_file(target, key=r2_storage.vault_key(safe_name)):
                     upload_failed.append(safe_name)
+            processed.add(upload_id)
+            saved_names.append(safe_name)
         if upload_failed:
             st.warning("以下文件已保存到本地，但同步到 Cloudflare R2 失败：" + "、".join(upload_failed))
-        else:
+        elif saved_names:
             st.success(f"文件已成功保存到工厂【{factory}】的文件库并同步至 Cloudflare R2。")
 
     existing_files = sorted(

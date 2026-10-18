@@ -59,7 +59,7 @@ def _guard_select(key, options):
 
 
 def _clean_local_dirs(factory):
-  for folder_prefix in ["uploaded_vault", "file_trash", "chart_history"]:
+  for folder_prefix in ["uploaded_vault", "file_trash", "chart_history", "chart_trash", "_quarantine"]:
     local_dir = f"{folder_prefix}_{factory}"
     if os.path.exists(local_dir):
       shutil.rmtree(local_dir, ignore_errors=True)
@@ -162,6 +162,24 @@ def render_factory_management(user_role, allowed_factories):
       if st.button("🔄 从云端刷新工厂列表", key="btn_refresh_fac", use_container_width=True):
         ensure_factories_loaded(force=True)
         st.rerun()
+
+      if st.button("🔍 检查各工厂数据是否串厂", key="btn_scan_fac", use_container_width=True):
+        result, err = freg.scan_factory_files()
+        if result is None:
+          st.error(f"检查失败：{err}")
+        else:
+          for fac, entry in sorted(result["factories"].items()):
+            st.write(
+                f"**{fac}**：数据文件 {len(entry['vault'])} 个，回收站 {len(entry['trash'])} 个，历史图表 {entry['charts']} 张"
+            )
+            for n in sorted(entry["vault"]):
+              st.caption(f"　📄 {n}")
+          if result["duplicates"]:
+            st.warning("以下文件名同时出现在多个工厂的 R2 目录里，请核对是否有一份放错了工厂：")
+            for n, facs in sorted(result["duplicates"].items()):
+              st.text(f"{n}  →  {'、'.join(facs)}")
+          else:
+            st.success("没有发现同名文件出现在多个工厂里。")
 
       st.markdown("#### ➕ 增加新工厂")
       new_fac_name = st.text_input(

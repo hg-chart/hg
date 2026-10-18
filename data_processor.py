@@ -6,6 +6,7 @@ import re
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from pathlib import Path
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -62,12 +63,68 @@ def _to_datetime_input(value):
     return text
 
 
+# 常见格式走 pandas 的向量化解析（比逐格处理快几十倍）；只有认不出的少数单元格才走慢速兜底
+_FAST_FORMATS = (
+    "ISO8601",              # 2026-08-01 / 2026-08-01 18:07:00 / 带毫秒，且允许混合
+    "%Y/%m/%d %H:%M:%S",
+    "%Y/%m/%d %H:%M",
+    "%Y/%m/%d",
+)
+
+
+def _slow_parse(values):
+    """逐格兜底解析（中文日期、点号日期、带备注文字等）。相同的值只算一次。"""
+    mapping = {u: _to_datetime_input(u) for u in pd.unique(values.dropna())}
+    cleaned = values.map(mapping)
+    return pd.to_datetime(cleaned, format="mixed", errors="coerce")
+
+
 def parse_datetime_series(series):
-    """把一列时间数据稳健地转成 datetime64；识别不了的变成 NaT。"""
+    """把一列时间数据稳健地转成 datetime64；识别不了的变成 NaT。
+
+    先用向量化的快速格式解析整列，只有没解析出来的单元格才用慢速逻辑兜底，
+    所以几十万行的秒级时间也能很快完成。
+    """
     if pd.api.types.is_datetime64_any_dtype(series):
         return pd.to_datetime(series, errors="coerce")
-    cleaned = series.map(_to_datetime_input)
-    return pd.to_datetime(cleaned, format="mixed", errors="coerce")
+    n = len(series)
+    if n == 0:
+        return pd.to_datetime(series, errors="coerce")
+
+    # 纯数字列：只有落在 Excel 日期序列号范围内才当作日期
+    if pd.api.types.is_numeric_dtype(series) and not pd.api.types.is_bool_dtype(series):
+        num = pd.to_numeric(series, errors="coerce")
+        in_range = (num > 20000) & (num < 80000)
+        return pd.to_datetime(num.where(in_range), unit="D", origin="1899-12-30", errors="coerce")
+
+    valid = series.notna().to_numpy()
+    pos_valid = np.flatnonzero(valid)
+    out = np.full(n, np.datetime64("NaT"), dtype="datetime64[ns]")
+    if len(pos_valid) == 0:
+        return pd.Series(out, index=series.index)
+
+    text = series.iloc[pos_valid].astype(str).str.strip()
+    sample = text.iloc[:300]
+    chosen = None
+    for fmt in _FAST_FORMATS:
+        try:
+            if pd.to_datetime(sample, format=fmt, errors="coerce").notna().mean() >= 0.9:
+                chosen = fmt
+                break
+        except Exception:
+            continue
+
+    if chosen:
+        fast = pd.to_datetime(text, format=chosen, errors="coerce")
+        out[pos_valid] = fast.to_numpy(dtype="datetime64[ns]")
+        fail_pos = pos_valid[fast.isna().to_numpy()]
+    else:
+        fail_pos = pos_valid
+
+    if len(fail_pos):
+        slow = _slow_parse(series.iloc[fail_pos])
+        out[fail_pos] = slow.to_numpy(dtype="datetime64[ns]")
+    return pd.Series(out, index=series.index)
 
 
 def is_date_only(parsed):
@@ -97,7 +154,8 @@ def _time_of_day(series):
         except Exception:
             return pd.NaT
 
-    return pd.to_timedelta(series.map(one))
+    mapping = {u: one(u) for u in pd.unique(series.dropna())}
+    return pd.to_timedelta(series.map(mapping))
 
 
 
@@ -238,45 +296,63 @@ def _clean_dataframe_columns(df):
     return df
 
 
-def load_and_process_data(active_paths):
-    """读取并智能清洗合并 CSV / Excel 文件，返回原始 DataFrame 与干净的列名列表"""
-    try:
-        dataframes = []
+def _load_and_process_uncached(active_paths):
+    """读取并智能清洗合并 CSV / Excel 文件（耗时操作，调用方应走带缓存的 load_and_process_data）"""
+    dataframes = []
 
-        for file_path in active_paths:
-            df = None
-            if file_path.lower().endswith(".csv"):
-                read_errors = []
-                for encoding in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
-                    try:
-                        # CSV 统一按单行标准表头 header=0 读取
-                        df = pd.read_csv(file_path, encoding=encoding, header=0)
-                        break
-                    except Exception as exc:
-                        read_errors.append(f"{encoding}: {exc}")
-                
-                if df is None:
-                    raise ValueError(f"无法读取 CSV 文件 {Path(file_path).name}。错误：" + "；".join(read_errors))
-            else:
-                # Excel 可能是多级表头，尝试 header=[0, 1]，失败则退回 header=0
+    for file_path in active_paths:
+        df = None
+        if file_path.lower().endswith(".csv"):
+            read_errors = []
+            for encoding in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
                 try:
-                    df = pd.read_excel(file_path, header=[0, 1])
-                    if isinstance(df.columns, pd.MultiIndex):
-                        # 如果是多级表头，展平
-                        df.columns = ["_".join([str(c).strip() for c in col if str(c) != "nan" and "Unnamed" not in str(c)]) for col in df.columns]
-                except Exception:
-                    df = pd.read_excel(file_path, header=0)
+                    # CSV 统一按单行标准表头 header=0 读取
+                    df = pd.read_csv(file_path, encoding=encoding, header=0)
+                    break
+                except Exception as exc:
+                    read_errors.append(f"{encoding}: {exc}")
+            
+            if df is None:
+                raise ValueError(f"无法读取 CSV 文件 {Path(file_path).name}。错误：" + "；".join(read_errors))
+        else:
+            # Excel 可能是多级表头，尝试 header=[0, 1]，失败则退回 header=0
+            try:
+                df = pd.read_excel(file_path, header=[0, 1])
+                if isinstance(df.columns, pd.MultiIndex):
+                    # 如果是多级表头，展平
+                    df.columns = ["_".join([str(c).strip() for c in col if str(c) != "nan" and "Unnamed" not in str(c)]) for col in df.columns]
+            except Exception:
+                df = pd.read_excel(file_path, header=0)
 
-            # 执行通用清洗
-            df = _clean_dataframe_columns(df)
-            dataframes.append(df)
+        # 执行通用清洗
+        df = _clean_dataframe_columns(df)
+        dataframes.append(df)
 
-        df_raw = pd.concat(dataframes, ignore_index=True, sort=False)
-        
-        # 提取最终干净的列名列表（排除任何空值或 Unnamed）
-        columns = [str(c).strip() for c in df_raw.columns if str(c).strip() and "Unnamed" not in str(c)]
-        return df_raw, columns
+    df_raw = pd.concat(dataframes, ignore_index=True, sort=False)
+    
+    # 提取最终干净的列名列表（排除任何空值或 Unnamed）
+    columns = [str(c).strip() for c in df_raw.columns if str(c).strip() and "Unnamed" not in str(c)]
+    return df_raw, columns
 
+
+@st.cache_resource(show_spinner=False, max_entries=6)
+def _load_cached(signature):
+    return _load_and_process_uncached([item[0] for item in signature])
+
+
+def load_and_process_data(active_paths):
+    """读取并清洗数据文件，返回 (原始 DataFrame, 列名列表)。
+
+    结果按“文件路径 + 修改时间 + 大小”缓存：Streamlit 每次交互都会重跑脚本，
+    没有这层缓存的话，每点一下都要把所有勾选的文件重新读取、重新解析。
+    文件被重新上传或修改后，缓存会自动失效。
+    注意：返回的 DataFrame 是缓存对象，调用方不要原地修改（图表模块已使用 .copy()）。
+    """
+    try:
+        signature = tuple(
+            (p, os.stat(p).st_mtime_ns, os.stat(p).st_size) for p in active_paths
+        )
+        return _load_cached(signature)
     except Exception as exc:
         st.error(f"读取文件失败：{exc}")
         st.stop()

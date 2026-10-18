@@ -385,7 +385,12 @@ def render_chart_generator(
                         time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
                         chart_filename = f"{p_col_current}_{load_tag_str}_{time_str}.png"
                         
-                        chart_local_path = os.path.join("chart_history", chart_filename)
+                        _factory = st.session_state.get("selected_factory")
+                        if not _factory:
+                            raise RuntimeError("尚未选择工厂，无法保存图片。")
+                        _chart_dir = f"chart_history_{_factory}"
+                        os.makedirs(_chart_dir, exist_ok=True)
+                        chart_local_path = os.path.join(_chart_dir, chart_filename)
                         with open(chart_local_path, "wb") as img_file:
                             img_file.write(st.session_state.plotted_fig_bytes)
                         

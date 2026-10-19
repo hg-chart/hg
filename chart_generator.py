@@ -80,7 +80,7 @@ def draw_trend_chart(
     """绘制多时段对比趋势图，返回 (fig, 刻度说明文字, 图例说明文字)。
 
     - 左、右纵轴都可以选 0 个或多个数据列；只有一侧有数据时，图里只有横轴和这一侧的纵轴。
-    - 左轴只选一列：面积图（与以前一致）；选多列：折线。右轴一律折线。
+    - 左轴只选一列：面积图（与以前一致，上边界加粗不透明处理）；选多列：折线。右轴一律折线。
     - 颜色区分时间段；同一侧多个数据列用不同线型区分。
     """
     n_left, n_right = len(left_cols), len(right_cols)
@@ -124,10 +124,11 @@ def draw_trend_chart(
             label = f"{label_name} {period['description']}"
             y = part[col].to_numpy()
             if side == "left" and area_mode:
+                # 优化面积图：调低填充透明度(alpha=0.38)，同时将上边界线条加粗(1.5)并完全不透明(alpha=1.0)，确保边界清清楚楚
                 artist = ax.fill_between(
-                    x_values, y, color=period["fill_color"], alpha=0.50, label=label,
+                    x_values, y, color=period["fill_color"], alpha=0.38, label=label,
                 )
-                ax.plot(x_values, y, color=period["fill_color"], linewidth=0.8, alpha=0.9)
+                ax.plot(x_values, y, color=period["fill_color"], linewidth=1.5, alpha=1.0)
             else:
                 linestyle, marker = styles[s_idx]
                 (artist,) = ax.plot(

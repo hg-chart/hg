@@ -201,33 +201,59 @@ def _name_stem(text):
     return re.sub(r"[\d#＃\s_\-（）()\.]+", "", str(text or ""))
 
 
+def _as_list(value):
+    """把 None / 单个列名 / 列名列表 统一成列表。"""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value]
+    return [str(value)]
+
+
 def detect_axis_kind(label, col):
-    """判断一个纵轴的数据类型：优先看用户起的坐标轴名称，认不出再看数据列名。"""
+    """判断一个数据列的类型：优先看用户起的坐标轴名称，认不出再看数据列名。"""
     return detect_data_kind(label) or detect_data_kind(col)
 
 
-def axes_same_kind(left_label, left_col, right_label, right_col):
-    """左右纵轴是否同类。返回 (是否同类, 说明文字)。"""
-    k_left = detect_axis_kind(left_label, left_col)
-    k_right = detect_axis_kind(right_label, right_col)
-    if k_left and k_right:
-        if k_left == k_right:
-            return True, f"左右纵轴都是【{k_left}】"
-        return False, f"左纵轴是【{k_left}】、右纵轴是【{k_right}】，不是同一类"
-    stem_left = _name_stem(left_label or left_col)
-    stem_right = _name_stem(right_label or right_col)
-    if stem_left and stem_left == stem_right:
-        return True, "左右纵轴的名称只有编号不同，按同类处理"
+def _side_kinds(label, cols):
+    """一侧纵轴的数据类型集合：坐标轴名称能认出就整侧按它算，否则逐列判断（None 表示认不出）。"""
+    kind = detect_data_kind(label)
+    if kind:
+        return {kind}
+    return {detect_data_kind(c) for c in cols}
+
+
+def axes_same_kind(left_label, left_cols, right_label, right_cols):
+    """左右纵轴的全部数据列是否同类。返回 (是否同类, 说明文字)。"""
+    left_cols, right_cols = _as_list(left_cols), _as_list(right_cols)
+    if not left_cols or not right_cols:
+        return False, "只有一侧纵轴有数据，无需统一刻度"
+    kinds_left = _side_kinds(left_label, left_cols)
+    kinds_right = _side_kinds(right_label, right_cols)
+    kinds = kinds_left | kinds_right
+    if None not in kinds:
+        if len(kinds) == 1:
+            return True, f"左右纵轴都是【{next(iter(kinds))}】"
+        return False, (
+            f"左纵轴是【{'、'.join(sorted(kinds_left))}】、右纵轴是【{'、'.join(sorted(kinds_right))}】，不是同一类"
+        )
+    stems = {_name_stem(c) for c in left_cols + right_cols}
+    if len(stems) == 1 and "" not in stems:
+        return True, "各数据列的名称只有编号不同，按同类处理"
     return False, "无法判断左右纵轴是否同类，按各自独立刻度处理（可手动选择“强制统一刻度”）"
 
 
-def should_unify_axes(mode, left_label, left_col, right_label, right_col):
-    """根据用户选择的模式，决定两个纵轴是否使用完全相同的刻度。返回 (是否统一, 说明)。"""
+def should_unify_axes(mode, left_label, left_cols, right_label, right_cols):
+    """根据用户选择的模式，决定两个纵轴是否使用完全相同的刻度。返回 (是否统一, 说明)。
+    只有一侧纵轴有数据时没有“两个纵轴”，永远不统一。"""
+    left_cols, right_cols = _as_list(left_cols), _as_list(right_cols)
+    if not left_cols or not right_cols:
+        return False, "只有一侧纵轴有数据，无需统一刻度"
     if mode == SCALE_SAME:
         return True, "已手动选择：两个纵轴使用相同刻度"
     if mode == SCALE_INDEP:
         return False, "已手动选择：两个纵轴各自独立刻度"
-    return axes_same_kind(left_label, left_col, right_label, right_col)
+    return axes_same_kind(left_label, left_cols, right_label, right_cols)
 
 
 COLUMN_ALIASES = {
@@ -358,6 +384,35 @@ def load_and_process_data(active_paths):
         st.stop()
 
 
+def _axis_multiselect(label, columns, key, default):
+    """纵轴数据列多选框（可以一个都不选）。已选项里不在当前列表中的会先清掉，避免换文件后报错。"""
+    if key in st.session_state:
+        st.session_state[key] = [c for c in st.session_state[key] if c in columns]
+    else:
+        st.session_state[key] = [c for c in default if c in columns]
+    return st.multiselect(label, columns, key=key)
+
+
+def _drop_stale_selection(key, options):
+    """选项变化后，清掉已失效的旧选中值，避免 selectbox 报错。"""
+    if key in st.session_state and st.session_state[key] not in options:
+        del st.session_state[key]
+
+
+def _axis_labels(custom_label, cols):
+    """返回 (坐标轴简称, 坐标轴完整标题, {列名: 图例中使用的名称})。
+    只选一列：与以前一致，名称取自定义名或列名，标题带列名；
+    选多列：标题用自定义名（没有就把列名连起来），图例里用各自的列名。"""
+    custom = (custom_label or "").strip()
+    if not cols:
+        return "", "", {}
+    if len(cols) == 1:
+        raw = custom if custom else cols[0]
+        return raw, f"{raw}（{cols[0]}）", {cols[0]: raw}
+    raw = custom if custom else "、".join(cols)
+    return raw, raw, {c: c for c in cols}
+
+
 def render_column_and_filter_config(columns):
     """渲染数据列选择、坐标轴自定义命名、本地持久化记忆与修改按钮控制"""
     
@@ -423,14 +478,30 @@ def render_column_and_filter_config(columns):
         if "斗提机电流" in col or "1＃" in col:
             default_load_index = idx
             break
+    default_right_index = min(2, len(columns) - 1)
 
     col1_bot, col2_bot, col3_bot = st.columns(3)
     with col1_bot:
         time_col = st.selectbox(f"横坐标轴（{current_time_var}）请选择数据来源", columns, index=0)
     with col2_bot:
-        load_col = st.selectbox(f"左纵轴（{current_load_var}）请选择数据来源", columns, index=default_load_index)
+        left_cols = _axis_multiselect(
+            f"左纵轴（{current_load_var}）数据来源（可多选，也可不选）",
+            columns, f"axis_left_cols_{current_factory}", [columns[default_load_index]],
+        )
     with col3_bot:
-        pressure_col = st.selectbox(f"右纵轴（{current_pressure_var}）请选择数据来源", columns, index=min(2, len(columns) - 1))
+        right_cols = _axis_multiselect(
+            f"右纵轴（{current_pressure_var}）数据来源（可多选，也可不选）",
+            columns, f"axis_right_cols_{current_factory}", [columns[default_right_index]],
+        )
+
+    if not left_cols and not right_cols:
+        st.warning("左、右纵轴至少要选择一个数据列，否则没有可画的数据。")
+    elif not right_cols:
+        st.caption("📈 右纵轴未选数据：图中只有横轴和左纵轴。")
+    elif not left_cols:
+        st.caption("📈 左纵轴未选数据：图中只有横轴和右纵轴。")
+    if len(left_cols) > 1 or len(right_cols) > 1:
+        st.caption("🎨 同一时间段用同一种颜色；同一侧选了多个数据列时，用不同线型（实线、虚线、点划线、点线）区分各列，图例里会标明列名和左右轴。")
 
     # 纵轴刻度模式：左右同类数据（如都是压差）时，两个纵轴刻度完全相同，便于直接对比
     scale_mode = st.radio(
@@ -438,34 +509,48 @@ def render_column_and_filter_config(columns):
         SCALE_OPTIONS,
         horizontal=True,
         key="axis_scale_mode",
-        help="自动判断：左右纵轴是同一类数据（如都是压差）时，两个纵轴的刻度范围和刻度线完全一致；"
-             "不同类（如负荷对压差）时各自独立。",
+        help="自动判断：左右纵轴的全部数据列是同一类数据（如都是压差）时，两个纵轴的刻度范围和刻度线完全一致；"
+             "不同类（如负荷对压差）时各自独立。只有一侧纵轴有数据时不涉及此项。",
     )
     _unify, _unify_reason = should_unify_axes(
-        scale_mode, load_custom_label.strip(), load_col, pressure_custom_label.strip(), pressure_col
+        scale_mode, load_custom_label.strip(), left_cols, pressure_custom_label.strip(), right_cols
     )
-    st.caption(("📏 两个纵轴将使用相同刻度：" if _unify else "📐 两个纵轴使用各自独立刻度：") + _unify_reason)
+    st.caption((("📏 两个纵轴将使用相同刻度：" if _unify else "📐 两个纵轴使用各自独立刻度：")) + _unify_reason)
 
     final_time_label = time_custom_label.strip() if time_custom_label.strip() else time_col
-    
-    raw_load_label = load_custom_label.strip() if load_custom_label.strip() else load_col
-    final_load_label = f"{raw_load_label}（{load_col}）"
-
-    raw_pressure_label = pressure_custom_label.strip() if pressure_custom_label.strip() else pressure_col
-    final_pressure_label = f"{raw_pressure_label}（{pressure_col}）"
+    raw_left_label, final_left_label, left_names = _axis_labels(load_custom_label, left_cols)
+    raw_right_label, final_right_label, right_names = _axis_labels(pressure_custom_label, right_cols)
 
     st.subheader("3. 数据过滤配置（可选：支持单值下限或闭区间）")
-    
-    available_filter_metrics = [raw_load_label, raw_pressure_label]
-    
+
+    # 过滤目标：从所有已选的数据列里选一个（名称重复时附上列名区分）
+    filter_options = {}
+    for cols, names in ((left_cols, left_names), (right_cols, right_names)):
+        for c in cols:
+            filter_options.setdefault(c, names[c])
+    display = list(filter_options.values())
+    if len(set(display)) != len(display):
+        filter_options = {c: f"{n}（{c}）" for c, n in filter_options.items()}
+
+    if not filter_options:
+        st.info("请先在上方选择纵轴数据列，再设置过滤条件。")
+        return (
+            time_col, left_cols, right_cols, None, None, True,
+            final_time_label, final_left_label, final_right_label,
+            None, "",
+            {"left_short": raw_left_label, "right_short": raw_right_label,
+             "left_names": left_names, "right_names": right_names,
+             "left_custom": load_custom_label.strip(), "right_custom": pressure_custom_label.strip()},
+        )
+
+    filter_key = f"filter_metric_{current_factory}"
+    _drop_stale_selection(filter_key, list(filter_options.values()))
     sel_col1, sel_col2 = st.columns([1, 2])
     with sel_col1:
-        selected_filter_metric = st.selectbox("选择过滤目标变量", options=available_filter_metrics, index=0)
-    
-    if selected_filter_metric == raw_load_label:
-        filter_target_col = load_col
-    else:
-        filter_target_col = pressure_col
+        selected_filter_metric = st.selectbox(
+            "选择过滤目标变量", options=list(filter_options.values()), index=0, key=filter_key,
+        )
+    filter_target_col = next(c for c, n in filter_options.items() if n == selected_filter_metric)
 
     with sel_col2:
         st.info(f"💡 当前正在对 **{selected_filter_metric}**（对应列：`{filter_target_col}`）设置数值区间过滤。")
@@ -499,9 +584,14 @@ def render_column_and_filter_config(columns):
             filter_valid = False
             st.error(f"{selected_filter_metric}下限不能大于上限！")
 
+    axis_info = {
+        "left_short": raw_left_label, "right_short": raw_right_label,
+        "left_names": left_names, "right_names": right_names,
+        "left_custom": load_custom_label.strip(), "right_custom": pressure_custom_label.strip(),
+    }
     return (
-        time_col, load_col, pressure_col, 
-        min_threshold, max_threshold, filter_valid, 
-        final_time_label, final_load_label, final_pressure_label,
-        filter_target_col, selected_filter_metric
+        time_col, left_cols, right_cols,
+        min_threshold, max_threshold, filter_valid,
+        final_time_label, final_left_label, final_right_label,
+        filter_target_col, selected_filter_metric, axis_info,
     )

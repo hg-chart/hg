@@ -139,22 +139,22 @@ if not columns:
     st.error("所选文件没有可用的数据列。")
     st.stop()
 
-# 接收 11 个返回值以匹配 data_processor 的最新输出
+# 左、右纵轴都可以选 0 个或多个数据列：time_col 是单个列名，left_cols / right_cols 是列名列表
 (
-    time_col, load_col, pressure_col, 
-    min_threshold, max_threshold, filter_valid, 
-    final_time_label, final_load_label, final_pressure_label,
-    filter_target_col, filter_metric_name
+    time_col, left_cols, right_cols,
+    min_threshold, max_threshold, filter_valid,
+    final_time_label, final_left_label, final_right_label,
+    filter_target_col, filter_metric_name, axis_info
 ) = data_processor.render_column_and_filter_config(columns)
 
 time_intervals_manager.render_time_intervals_manager(VAULT_DIR, df_raw, time_col)
 
 # 传入图表生成模块
 chart_generator.render_chart_generator(
-    df_raw, time_col, load_col, pressure_col, 
-    min_threshold, max_threshold, filter_valid, 
-    final_time_label, final_load_label, final_pressure_label,
-    filter_target_col, filter_metric_name
+    df_raw, time_col, left_cols, right_cols,
+    min_threshold, max_threshold, filter_valid,
+    final_time_label, final_left_label, final_right_label,
+    filter_target_col, filter_metric_name, axis_info
 )
 
 cloud_chart_manager.render_cloud_chart_manager(CHART_HISTORY_DIR, CHART_TRASH_DIR)

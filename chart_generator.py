@@ -32,16 +32,200 @@ def select_period_rows(df, time_col, start_dt, end_dt, date_only):
     return df[(df[time_col] >= lo) & (df[time_col] <= hi)].copy()
 
 
-def render_chart_generator(
-    df_raw, time_col, load_col, pressure_col, 
-    min_threshold, max_threshold, filter_valid, 
-    final_time_label="时间", final_load_label="机组负荷", final_pressure_label="压差",
-    filter_target_col=None, filter_metric_name="机组负荷"
+LINE_STYLES = ["-", "--", "-.", ":"]
+MARKERS = [None, None, None, None, "o", "s", "^", "D", "v", "P"]
+
+
+def _series_style(i):
+    """第 i 条折线的线型与标记：前 4 条只靠线型区分，之后再加标记。"""
+    return LINE_STYLES[i % len(LINE_STYLES)], (MARKERS[i] if i < len(MARKERS) else None)
+
+
+def _as_cols(value):
+    """None / 单个列名 / 列名列表 -> 列表。"""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value]
+    return [str(value)]
+
+
+def _safe_tag(text):
+    """文件名/R2 路径里用到的片段：去掉会破坏路径或命名解析的字符。"""
+    return str(text).replace("/", "-").replace("\\", "-").replace("_", "-")
+
+
+def _source_tag(cols):
+    """历史图表命名里的“数据来源”：只有一列时沿用列名；多列时用 + 连接。"""
+    cols = _as_cols(cols)
+    if len(cols) == 1:
+        return cols[0].replace("/", "-").replace("\\", "-")
+    return "+".join(_safe_tag(c) for c in cols)
+
+
+def _cond_str(min_threshold, max_threshold):
+    if min_threshold is not None and max_threshold is not None:
+        return f"{format_num(min_threshold)}-{format_num(max_threshold)}"
+    if min_threshold is not None:
+        return f"≥{format_num(min_threshold)}"
+    if max_threshold is not None:
+        return f"≤{format_num(max_threshold)}"
+    return "全部"
+
+
+def draw_trend_chart(
+    plotted_periods, time_col, left_cols, right_cols, left_names, right_names,
+    final_time_label, final_left_label, final_right_label, label_fmt, unify_axes,
 ):
-    """渲染生成趋势图的触发按钮及预览界面"""
+    """绘制多时段对比趋势图，返回 (fig, 刻度说明文字, 图例说明文字)。
+
+    - 左、右纵轴都可以选 0 个或多个数据列；只有一侧有数据时，图里只有横轴和这一侧的纵轴。
+    - 左轴只选一列：面积图（与以前一致）；选多列：折线。右轴一律折线。
+    - 颜色区分时间段；同一侧多个数据列用不同线型区分。
+    """
+    n_left, n_right = len(left_cols), len(right_cols)
+    both = n_left > 0 and n_right > 0
+    area_mode = n_left == 1
+    multi = n_left > 1 or n_right > 1
+
+    fig, ax1 = plt.subplots(figsize=(16, 8))
+    ax_l = ax1 if n_left else None
+    if both:
+        ax_r = ax1.twinx()
+    elif n_right:
+        ax_r = ax1
+        ax1.yaxis.tick_right()
+        ax1.yaxis.set_label_position("right")
+    else:
+        ax_r = None
+
+    series = [("left", c) for c in left_cols] + [("right", c) for c in right_cols]
+    styles, k = {}, 0
+    for s_idx, (side, _col) in enumerate(series):
+        if side == "left" and area_mode:
+            continue
+        styles[s_idx] = _series_style(k)
+        k += 1
+
+    handles = {}
+    all_x_labels = []
+    cursor = 0
+    for p_idx, period in enumerate(plotted_periods):
+        part = period["data"]
+        count = len(part)
+        x_values = list(range(cursor, cursor + count))
+        cursor += count
+        all_x_labels.extend(part[time_col].dt.strftime(label_fmt).tolist())
+
+        for s_idx, (side, col) in enumerate(series):
+            ax = ax_l if side == "left" else ax_r
+            name = (left_names if side == "left" else right_names).get(col, col)
+            label_name = f"[{'左' if side == 'left' else '右'}] {name}" if multi else name
+            label = f"{label_name} {period['description']}"
+            y = part[col].to_numpy()
+            if side == "left" and area_mode:
+                artist = ax.fill_between(
+                    x_values, y, color=period["fill_color"], alpha=0.50, label=label,
+                )
+                ax.plot(x_values, y, color=period["fill_color"], linewidth=0.8, alpha=0.9)
+            else:
+                linestyle, marker = styles[s_idx]
+                (artist,) = ax.plot(
+                    x_values, y, color=period["line_color"], linewidth=1.5,
+                    linestyle=linestyle, marker=marker, markersize=3,
+                    markevery=max(1, count // 15) if marker else None, label=label,
+                )
+            handles[(s_idx, p_idx)] = (artist, label)
+
+    ax1.set_xlabel(final_time_label, fontsize=12)
+    if ax_l is not None:
+        ax_l.set_ylabel(final_left_label, fontsize=12, color="black")
+    if ax_r is not None:
+        ax_r.set_ylabel(final_right_label, fontsize=12, color="black")
+
+    def _values(cols):
+        frames = [p_["data"][c] for p_ in plotted_periods for c in cols]
+        return pd.concat(frames).dropna() if frames else pd.Series(dtype=float)
+
+    # 两侧都有数据且同类（如都是压差）时：统一刻度范围和刻度线，便于直接对比
+    scale_note = ""
+    if both:
+        ax1.grid(False)
+        grid_ax = ax_r
+    else:
+        grid_ax = ax1
+    if unify_axes and both:
+        all_values = _values(left_cols + right_cols)
+        if not all_values.empty:
+            axis_lo = float(all_values.min())
+            axis_hi = float(all_values.max())
+            if area_mode:  # 左侧面积图以 0 为底，下限不高于 0
+                axis_lo = min(0.0, axis_lo)
+            axis_hi += max((axis_hi - axis_lo) * 0.03, 1e-9)
+            shared_ticks = ticker.MaxNLocator(nbins=10, steps=[1, 2, 2.5, 5, 10]).tick_values(axis_lo, axis_hi)
+            for axis_obj in (ax_l, ax_r):
+                axis_obj.set_ylim(shared_ticks[0], shared_ticks[-1])
+                axis_obj.set_yticks(shared_ticks)
+            scale_note = (
+                f"（两个纵轴已统一刻度：{format_num(float(shared_ticks[0]))} ~ "
+                f"{format_num(float(shared_ticks[-1]))}）"
+            )
+    elif ax_r is not None:
+        right_values = _values(right_cols)
+        if not right_values.empty:
+            span = float(right_values.max() - right_values.min())
+            if 600 <= span <= 6000:  # 数值范围合适时沿用原来的 200 一格；范围差太多则交给自动刻度
+                ax_r.yaxis.set_major_locator(ticker.MultipleLocator(200))
+    grid_ax.grid(True, linestyle="--", alpha=0.5, color="gray")
+
+    max_xticks = 12
+    step = max(1, len(all_x_labels) // max_xticks)
+    tick_positions = list(range(0, len(all_x_labels), step))
+    tick_labels = [all_x_labels[i] for i in tick_positions]
+    ax1.set_xticks(tick_positions)
+    ax1.set_xticklabels(tick_labels, rotation=30, ha="right")
+    ax1.tick_params(axis="x", labelsize=10)
+
+    # 图例：每一列对应一条数据序列、每一行对应一个时间段（序列多于 2 个时分两列排布）
+    n_series, n_periods = len(series), len(plotted_periods)
+    ordered = [handles[(s, p)] for s in range(n_series) for p in range(n_periods)]
+    legend_handles = [h for h, _ in ordered]
+    legend_labels = [l for _, l in ordered]
+    legend_ncol = max(1, min(2, n_series))
+    legend_rows = (len(legend_labels) + legend_ncol - 1) // legend_ncol
+    legend_h_in = legend_rows * 0.24 + 0.3
+    base_h_in = 8.0
+    fig_h_in = base_h_in + legend_h_in
+    fig.set_size_inches(16, fig_h_in)
+    fig.tight_layout(rect=[0, legend_h_in / fig_h_in, 1, 1])
+    fig.legend(
+        legend_handles, legend_labels, loc="lower center",
+        bbox_to_anchor=(0.5, 0.1 / fig_h_in), ncol=legend_ncol, fontsize=9.5, frameon=True,
+    )
+    return fig, scale_note, all_x_labels
+
+
+def render_chart_generator(
+    df_raw, time_col, left_cols, right_cols,
+    min_threshold, max_threshold, filter_valid,
+    final_time_label="时间", final_left_label="", final_right_label="",
+    filter_target_col=None, filter_metric_name="",
+    axis_info=None,
+):
+    """渲染生成趋势图的触发按钮及预览界面。左、右纵轴都可以选 0 个或多个数据列。"""
+    left_cols, right_cols = _as_cols(left_cols), _as_cols(right_cols)
+    axis_info = axis_info or {}
+    left_names = axis_info.get("left_names") or {c: c for c in left_cols}
+    right_names = axis_info.get("right_names") or {c: c for c in right_cols}
+    left_short = axis_info.get("left_short") or "、".join(left_cols)
+    right_short = axis_info.get("right_short") or "、".join(right_cols)
+    cond_str_clean = _cond_str(min_threshold, max_threshold)
+
     if st.button("🚀 开始生成多时段对比趋势图", type="primary"):
         if not filter_valid:
             st.error("请先修正过滤条件的输入错误。")
+        elif not left_cols and not right_cols:
+            st.error("请至少为左纵轴或右纵轴选择一个数据列。")
         elif not st.session_state.get("intervals"):
             st.session_state.plotted_fig_bytes = None
             st.session_state.plotted_title = ""
@@ -52,13 +236,12 @@ def render_chart_generator(
                 fig = None
                 try:
                     df = df_raw.copy()
-                    
-                    actual_time_col = time_col
-                    actual_load_col = load_col
-                    actual_pressure_col = pressure_col
-                    actual_filter_col = filter_target_col if filter_target_col else load_col
 
-                    required = [actual_time_col, actual_load_col, actual_pressure_col, actual_filter_col]
+                    actual_time_col = time_col
+                    value_cols = list(dict.fromkeys(left_cols + right_cols))
+                    actual_filter_col = filter_target_col if filter_target_col else value_cols[0]
+
+                    required = list(dict.fromkeys([actual_time_col] + value_cols + [actual_filter_col]))
                     missing = [col for col in required if col not in df.columns]
                     if missing:
                         raise KeyError("找不到所选数据列：" + "、".join(missing))
@@ -72,12 +255,13 @@ def render_chart_generator(
                             f"所选横坐标列【{actual_time_col}】无法识别为日期时间，示例内容：{raw_time_samples}。"
                             "请确认横坐标选择的是时间/日期列。"
                         )
-                    
-                    df[actual_load_col] = pd.to_numeric(df[actual_load_col], errors="coerce")
-                    df[actual_pressure_col] = pd.to_numeric(df[actual_pressure_col], errors="coerce")
-                    df[actual_filter_col] = pd.to_numeric(df[actual_filter_col], errors="coerce")
-                    
-                    df = df.dropna(subset=[actual_time_col, actual_load_col, actual_filter_col])
+
+                    for c in dict.fromkeys(value_cols + [actual_filter_col]):
+                        df[c] = pd.to_numeric(df[c], errors="coerce")
+
+                    # 过滤目标列必须有值；所有已选数据列都为空的行没有可画的内容，一并去掉
+                    df = df.dropna(subset=[actual_time_col, actual_filter_col])
+                    df = df.dropna(subset=value_cols, how="all")
                     # 稳定排序：同一时刻（例如同一天的多条记录）保持文件中的原有先后顺序
                     df = df.sort_values(actual_time_col, kind="stable").reset_index(drop=True)
                     df = df[df[actual_filter_col] != 0].copy()
@@ -116,18 +300,6 @@ def render_chart_generator(
                     diagnostics = []
                     periods_detailed_info = []
 
-                    load_short_name = final_load_label.split("（")[0] if "（" in final_load_label else final_load_label
-                    pressure_short_name = final_pressure_label.split("（")[0] if "（" in final_pressure_label else final_pressure_label
-
-                    if min_threshold is not None and max_threshold is not None:
-                        cond_str_clean = f"{format_num(min_threshold)}-{format_num(max_threshold)}"
-                    elif min_threshold is not None:
-                        cond_str_clean = f"≥{format_num(min_threshold)}"
-                    elif max_threshold is not None:
-                        cond_str_clean = f"≤{format_num(max_threshold)}"
-                    else:
-                        cond_str_clean = "全部"
-
                     for index, interval in enumerate(st.session_state.intervals):
                         start_dt = pd.to_datetime(interval["start"])
                         end_dt = pd.to_datetime(interval["end"])
@@ -137,13 +309,13 @@ def render_chart_generator(
                         if part.empty:
                             continue
 
-                        part = part.sort_values(actual_time_col).reset_index(drop=True)
+                        part = part.sort_values(actual_time_col, kind="stable").reset_index(drop=True)
                         fill_color, line_color = palette[index % len(palette)]
                         actual_start = part[actual_time_col].min().strftime(range_fmt)
                         actual_end = part[actual_time_col].max().strftime(range_fmt)
                         run_value = interval.get("run_sec", "0")
                         stop_value = interval.get("stop_sec", "-")
-                        
+
                         if run_value in ("0", "0.0"):
                             config_str = "多频集速没有运行"
                         else:
@@ -182,113 +354,39 @@ def render_chart_generator(
                         st.session_state.plotted_title = ""
                         st.session_state.plotted_periods_info = []
                     else:
-                        fig, ax1 = plt.subplots(figsize=(16, 8))
-                        ax2 = ax1.twinx()
-
-                        all_x_labels = []
-                        cursor = 0
-
-                        for period in plotted_periods:
-                            part = period["data"]
-                            count = len(part)
-                            x_values = list(range(cursor, cursor + count))
-                            cursor += count
-                            all_x_labels.extend(
-                                part[actual_time_col].dt.strftime(label_fmt).tolist()
-                            )
-
-                            ax1.fill_between(
-                                x_values,
-                                part[actual_load_col].to_numpy(),
-                                color=period["fill_color"],
-                                alpha=0.50,
-                                label=f"{load_short_name} {period['description']}",
-                            )
-                            ax1.plot(
-                                x_values,
-                                part[actual_load_col].to_numpy(),
-                                color=period["fill_color"],
-                                linewidth=0.8,
-                                alpha=0.9,
-                            )
-                            ax2.plot(
-                                x_values,
-                                part[actual_pressure_col].to_numpy(),
-                                color=period["line_color"],
-                                linewidth=1.5,
-                                label=f"{pressure_short_name} {period['description']}",
-                            )
-
-                        ax1.set_xlabel(final_time_label, fontsize=12)
-                        ax1.set_ylabel(final_load_label, fontsize=12, color="black")
-                        ax2.set_ylabel(final_pressure_label, fontsize=12, color="black")
-
-                        ax1.grid(False)
-
-                        # 左右纵轴同类（如都是压差）时：统一刻度范围和刻度线，便于直接对比
-                        unify_axes, unify_reason = data_processor.should_unify_axes(
+                        unify_axes, _unify_reason = data_processor.should_unify_axes(
                             st.session_state.get("axis_scale_mode"),
-                            load_short_name, actual_load_col,
-                            pressure_short_name, actual_pressure_col,
+                            axis_info.get("left_custom", ""), left_cols,
+                            axis_info.get("right_custom", ""), right_cols,
                         )
-                        scale_note = ""
-                        if unify_axes:
-                            all_values = pd.concat(
-                                [p_["data"][actual_load_col] for p_ in plotted_periods]
-                                + [p_["data"][actual_pressure_col] for p_ in plotted_periods]
-                            ).dropna()
-                            # 左侧是面积图（以 0 为底），所以下限不高于 0
-                            axis_lo = min(0.0, float(all_values.min()))
-                            axis_hi = float(all_values.max())
-                            axis_hi += max((axis_hi - axis_lo) * 0.03, 1e-9)
-                            shared_ticks = ticker.MaxNLocator(
-                                nbins=10, steps=[1, 2, 2.5, 5, 10]
-                            ).tick_values(axis_lo, axis_hi)
-                            for axis_obj in (ax1, ax2):
-                                axis_obj.set_ylim(shared_ticks[0], shared_ticks[-1])
-                                axis_obj.set_yticks(shared_ticks)
-                            scale_note = (
-                                f"（两个纵轴已统一刻度：{format_num(float(shared_ticks[0]))} ~ "
-                                f"{format_num(float(shared_ticks[-1]))}）"
+                        fig, scale_note, _x_labels = draw_trend_chart(
+                            plotted_periods, actual_time_col, left_cols, right_cols,
+                            left_names, right_names,
+                            final_time_label, final_left_label, final_right_label,
+                            label_fmt, unify_axes,
+                        )
+
+                        title_names = "/".join(n for n in (left_short, right_short) if n)
+                        chart_title = f"{title_names}对比趋势图（{filter_metric_name}区间：{cond_str_clean}）"
+                        fig.axes[0].set_title(chart_title, fontsize=14, pad=20)
+
+                        # 预览区的“图例说明”：面积图/折线图分别代表什么
+                        n_left, n_right = len(left_cols), len(right_cols)
+                        tip_parts = []
+                        if n_left:
+                            tip_parts.append(
+                                f"面积图代表{left_short}" if n_left == 1
+                                else "左轴折线：" + "、".join(left_names.get(c, c) for c in left_cols)
                             )
+                        if n_right:
+                            tip_parts.append(
+                                f"折线图代表{right_short}" if n_right == 1
+                                else "右轴折线：" + "、".join(right_names.get(c, c) for c in right_cols)
+                            )
+                        if n_left > 1 or n_right > 1:
+                            plotted_tip = "；".join(tip_parts) + "；颜色区分时间段，线型区分数据列"
                         else:
-                            ax2.yaxis.set_major_locator(ticker.MultipleLocator(200))
-                        ax2.grid(True, linestyle="--", alpha=0.5, color="gray")
-
-                        max_xticks = 12
-                        step = max(1, len(all_x_labels) // max_xticks)
-                        tick_positions = list(range(0, len(all_x_labels), step))
-                        tick_labels = [all_x_labels[i] for i in tick_positions]
-
-                        ax1.set_xticks(tick_positions)
-                        ax1.set_xticklabels(tick_labels, rotation=30, ha="right")
-                        ax1.tick_params(axis="x", labelsize=10)
-
-                        lines1, labels1 = ax1.get_legend_handles_labels()
-                        lines2, labels2 = ax2.get_legend_handles_labels()
-                        
-                        combined_lines = lines1 + lines2
-                        combined_labels = labels1 + labels2
-
-                        legend_rows = (len(combined_labels) + 1) // 2
-                        legend_h_in = legend_rows * 0.24 + 0.3
-                        base_h_in = 8.0
-                        fig_h_in = base_h_in + legend_h_in
-                        fig.set_size_inches(16, fig_h_in)
-
-                        fig.tight_layout(rect=[0, legend_h_in / fig_h_in, 1, 1])
-                        fig.legend(
-                            combined_lines,
-                            combined_labels,
-                            loc="lower center",
-                            bbox_to_anchor=(0.5, 0.1 / fig_h_in),
-                            ncol=2,
-                            fontsize=9.5,
-                            frameon=True,
-                        )
-
-                        chart_title = f"{load_short_name}/{pressure_short_name}对比趋势图（{filter_metric_name}区间：{cond_str_clean}）"
-                        plt.title(chart_title, fontsize=14, pad=20)
+                            plotted_tip = "，".join(tip_parts)
 
                         buf = io.BytesIO()
                         fig.savefig(buf, format="png", dpi=200, bbox_inches="tight", pad_inches=0.05)
@@ -296,7 +394,8 @@ def render_chart_generator(
                         st.session_state.plotted_fig_bytes = buf.getvalue()
                         st.session_state.plotted_title = chart_title
                         st.session_state.plotted_periods_info = periods_detailed_info
-                        st.session_state["current_pressure_col"] = actual_pressure_col
+                        st.session_state["plotted_tip"] = plotted_tip
+                        st.session_state["current_pressure_col"] = _source_tag(right_cols or left_cols)
                         st.session_state["current_filter_metric"] = filter_metric_name
                         plt.close(fig)
                         st.success("多时段对比趋势图生成成功！" + scale_note)
@@ -312,29 +411,20 @@ def render_chart_generator(
         st.image(st.session_state.plotted_fig_bytes, use_container_width=True)
 
         with st.container(border=True):
-            load_short_name_prev = final_load_label.split("（")[0] if "（" in final_load_label else final_load_label
-            pressure_short_name_prev = final_pressure_label.split("（")[0] if "（" in final_pressure_label else final_pressure_label
             active_metric = st.session_state.get("current_filter_metric", filter_metric_name)
 
-            if min_threshold is not None and max_threshold is not None:
-                current_threshold_str = f"{active_metric}区间 {format_num(min_threshold)}-{format_num(max_threshold)}"
-            elif min_threshold is not None:
-                current_threshold_str = f"{active_metric}≥{format_num(min_threshold)}"
-            elif max_threshold is not None:
-                current_threshold_str = f"{active_metric}≤{format_num(max_threshold)}"
-            else:
-                current_threshold_str = f"全部{active_metric}"
+            st.markdown(f"📋 **各时段详细起止与配置说明（{active_metric}区间 {cond_str_clean}）**", unsafe_allow_html=True)
 
-            st.markdown(f"📋 **各时段详细起止与配置说明（{active_metric}区间 {cond_str_clean if 'cond_str_clean' in locals() else ''}）**", unsafe_allow_html=True)
-            
-            st.markdown(
-                f"<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 12px; text-align: center;'>"
-                f"<span style='color: #d93838; font-weight: bold; font-size: 16px;'>💡 提示：</span>"
-                f"<span style='font-weight: bold; font-size: 15px; color: #1f1f1f;'>面积图代表{load_short_name_prev}，折线图代表{pressure_short_name_prev}</span>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-            
+            plotted_tip = st.session_state.get("plotted_tip", "")
+            if plotted_tip:
+                st.markdown(
+                    f"<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 12px; text-align: center;'>"
+                    f"<span style='color: #d93838; font-weight: bold; font-size: 16px;'>💡 提示：</span>"
+                    f"<span style='font-weight: bold; font-size: 15px; color: #1f1f1f;'>{plotted_tip}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
             for item in st.session_state.get("plotted_periods_info", []):
                 color = item.get("color", "#31333F")
                 text = item.get("text", "")
@@ -370,8 +460,8 @@ def render_chart_generator(
                         elif not scheme_name:
                             scheme_name = "未命名时间段方案"
                         
-                        p_col_current = st.session_state.get("current_pressure_col", pressure_col)
-                        active_metric_save = st.session_state.get("current_filter_metric", filter_metric_name)
+                        p_col_current = st.session_state.get("current_pressure_col") or _source_tag(right_cols or left_cols)
+                        active_metric_save = _safe_tag(st.session_state.get("current_filter_metric", filter_metric_name))
                         
                         if min_threshold is not None and max_threshold is not None:
                             load_tag_str = f"{active_metric_save}_{format_num(min_threshold)}_{format_num(max_threshold)}"

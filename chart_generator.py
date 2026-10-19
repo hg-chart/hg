@@ -80,8 +80,8 @@ def draw_trend_chart(
     """绘制多时段对比趋势图，返回 (fig, 刻度说明文字, 图例说明文字)。
 
     - 左、右纵轴都可以选 0 个或多个数据列；只有一侧有数据时，图里只有横轴和这一侧的纵轴。
-    - 左轴只选一列：面积图（与以前一致，上边界加粗不透明处理）；选多列：折线。右轴一律折线。
-    - 颜色区分时间段；同一侧多个数据列用不同线型区分。
+    - 左轴只选一列：面积图（上边界加粗不透明处理）；选多列：折线。右轴一律折线。
+    - 颜色区分时间段；如果有多条折线，自动分配不同线条颜色，确保不与面积图颜色一致。
     """
     n_left, n_right = len(left_cols), len(right_cols)
     both = n_left > 0 and n_right > 0
@@ -107,6 +107,19 @@ def draw_trend_chart(
         styles[s_idx] = _series_style(k)
         k += 1
 
+    # 调色板定义：每项为 (面积填充色, 折线基础色)
+    palette = [
+        ("#85B2FF", "#1E3F66"),
+        ("#52C41A", "#135200"),
+        ("#FF7875", "#820014"),
+        ("#B37FEB", "#391085"),
+        ("#FF9C6E", "#873800"),
+        ("#36CBCB", "#00474F"),
+        ("#FF85C0", "#990033"),
+        ("#D3F261", "#5B8C00"),
+    ]
+    line_palette_colors = [p[1] for p in palette]
+
     handles = {}
     all_x_labels = []
     cursor = 0
@@ -117,22 +130,28 @@ def draw_trend_chart(
         cursor += count
         all_x_labels.extend(part[time_col].dt.strftime(label_fmt).tolist())
 
+        line_count = 0
         for s_idx, (side, col) in enumerate(series):
             ax = ax_l if side == "left" else ax_r
             name = (left_names if side == "left" else right_names).get(col, col)
             label_name = f"[{'左' if side == 'left' else '右'}] {name}" if multi else name
             label = f"{label_name} {period['description']}"
             y = part[col].to_numpy()
+
             if side == "left" and area_mode:
-                # 优化面积图：调低填充透明度(alpha=0.38)，同时将上边界线条加粗(1.5)并完全不透明(alpha=1.0)，确保边界清清楚楚
+                # 面积图使用该时段的填充色
                 artist = ax.fill_between(
                     x_values, y, color=period["fill_color"], alpha=0.38, label=label,
                 )
                 ax.plot(x_values, y, color=period["fill_color"], linewidth=1.5, alpha=1.0)
             else:
                 linestyle, marker = styles[s_idx]
+                # 多条折线时自动错开颜色，确保各折线颜色不同且不与面积图颜色一致
+                line_color = line_palette_colors[(p_idx + line_count) % len(line_palette_colors)]
+                line_count += 1
+
                 (artist,) = ax.plot(
-                    x_values, y, color=period["line_color"], linewidth=1.5,
+                    x_values, y, color=line_color, linewidth=1.5,
                     linestyle=linestyle, marker=marker, markersize=3,
                     markevery=max(1, count // 15) if marker else None, label=label,
                 )
@@ -175,7 +194,7 @@ def draw_trend_chart(
         right_values = _values(right_cols)
         if not right_values.empty:
             span = float(right_values.max() - right_values.min())
-            if 600 <= span <= 6000:  # 数值范围合适时沿用原来的 200 一格；范围差太多则交给自动刻度
+            if 600 <= span <= 6000:
                 ax_r.yaxis.set_major_locator(ticker.MultipleLocator(200))
     grid_ax.grid(True, linestyle="--", alpha=0.5, color="gray")
 
@@ -187,7 +206,7 @@ def draw_trend_chart(
     ax1.set_xticklabels(tick_labels, rotation=30, ha="right")
     ax1.tick_params(axis="x", labelsize=10)
 
-    # 图例：每一列对应一条数据序列、每一行对应一个时间段（序列多于 2 个时分两列排布）
+    # 图例：每一列对应一条数据序列、每一行对应一个时间段
     n_series, n_periods = len(series), len(plotted_periods)
     ordered = [handles[(s, p)] for s in range(n_series) for p in range(n_periods)]
     legend_handles = [h for h, _ in ordered]
@@ -247,7 +266,7 @@ def render_chart_generator(
                     if missing:
                         raise KeyError("找不到所选数据列：" + "、".join(missing))
 
-                    # 确保时间列为 datetime 格式（兼容“2026年5月21日”“2026.9.13”等写法）
+                    # 确保时间列为 datetime 格式
                     raw_time_samples = df[actual_time_col].dropna().astype(str).head(3).tolist()
                     df[actual_time_col] = data_processor.parse_datetime_series(df[actual_time_col])
                     valid_time_rows = int(df[actual_time_col].notna().sum())
@@ -260,17 +279,14 @@ def render_chart_generator(
                     for c in dict.fromkeys(value_cols + [actual_filter_col]):
                         df[c] = pd.to_numeric(df[c], errors="coerce")
 
-                    # 过滤目标列必须有值；所有已选数据列都为空的行没有可画的内容，一并去掉
                     df = df.dropna(subset=[actual_time_col, actual_filter_col])
                     df = df.dropna(subset=value_cols, how="all")
-                    # 稳定排序：同一时刻（例如同一天的多条记录）保持文件中的原有先后顺序
                     df = df.sort_values(actual_time_col, kind="stable").reset_index(drop=True)
                     df = df[df[actual_filter_col] != 0].copy()
                     date_only = data_processor.is_date_only(df[actual_time_col])
                     label_fmt = "%m-%d" if date_only else "%m-%d %H:%M:%S"
                     range_fmt = "%Y-%m-%d" if date_only else "%Y-%m-%d %H:%M:%S"
 
-                    # 动态过滤逻辑
                     if min_threshold is not None and max_threshold is not None:
                         df = df[(df[actual_filter_col] >= min_threshold) & (df[actual_filter_col] <= max_threshold)].copy()
                     elif min_threshold is not None:
@@ -371,7 +387,6 @@ def render_chart_generator(
                         chart_title = f"{title_names}对比趋势图（{filter_metric_name}区间：{cond_str_clean}）"
                         fig.axes[0].set_title(chart_title, fontsize=14, pad=20)
 
-                        # 预览区的“图例说明”：面积图/折线图分别代表什么
                         n_left, n_right = len(left_cols), len(right_cols)
                         tip_parts = []
                         if n_left:
@@ -385,7 +400,7 @@ def render_chart_generator(
                                 else "右轴折线：" + "、".join(right_names.get(c, c) for c in right_cols)
                             )
                         if n_left > 1 or n_right > 1:
-                            plotted_tip = "；".join(tip_parts) + "；颜色区分时间段，线型区分数据列"
+                            plotted_tip = "；".join(tip_parts) + "；颜色区分时间段与多列，线型区分数据列"
                         else:
                             plotted_tip = "，".join(tip_parts)
 

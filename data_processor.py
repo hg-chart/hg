@@ -532,15 +532,18 @@ def render_column_and_filter_config(columns):
     if len(set(display)) != len(display):
         filter_options = {c: f"{n}（{c}）" for c, n in filter_options.items()}
 
+    axis_info = {
+        "left_short": raw_left_label, "right_short": raw_right_label,
+        "left_names": left_names, "right_names": right_names,
+        "left_custom": load_custom_label.strip(), "right_custom": pressure_custom_label.strip(),
+    }
+
     if not filter_options:
         st.info("请先在上方选择纵轴数据列，再设置过滤条件。")
         return (
             time_col, left_cols, right_cols, None, None, True,
             final_time_label, final_left_label, final_right_label,
-            None, "",
-            {"left_short": raw_left_label, "right_short": raw_right_label,
-             "left_names": left_names, "right_names": right_names,
-             "left_custom": load_custom_label.strip(), "right_custom": pressure_custom_label.strip()},
+            None, "", axis_info,
         )
 
     filter_key = f"filter_metric_{current_factory}"
@@ -584,11 +587,6 @@ def render_column_and_filter_config(columns):
             filter_valid = False
             st.error(f"{selected_filter_metric}下限不能大于上限！")
 
-    axis_info = {
-        "left_short": raw_left_label, "right_short": raw_right_label,
-        "left_names": left_names, "right_names": right_names,
-        "left_custom": load_custom_label.strip(), "right_custom": pressure_custom_label.strip(),
-    }
     return (
         time_col, left_cols, right_cols,
         min_threshold, max_threshold, filter_valid,

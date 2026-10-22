@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """模块五：图表绘制与预览"""
+import html
 import io
 import os
 from datetime import datetime
@@ -315,16 +316,17 @@ def render_chart_generator(
                         actual_end = part[actual_time_col].max().strftime(range_fmt)
                         run_value = interval.get("run_sec", "0")
                         stop_value = interval.get("stop_sec", "-")
-                        remark_value = str(interval.get("remark", "")).strip()
 
                         if run_value in ("0", "0.0"):
                             config_str = "多频集速没有运行"
                         else:
                             config_str = f"多频集速运行{run_value}s/停止{stop_value}s"
 
-                        # 加上备注字段（如果用户填写了，接在多频集速启停时间后，不出现“备注”字样）
-                        if remark_value:
-                            config_str = f"{config_str} {remark_value}"
+                        # 手动填写的说明（如“喷吹0.3秒，间隔2分钟”）：紧跟在多频集速启停时间之后，不带“备注”字样。
+                        # 把半角 $ 换成全角，避免图例里的 $ 被当作数学公式。
+                        remark_text = str(interval.get("remark") or "").strip().replace("$", "＄")
+                        if remark_text:
+                            config_str = f"{config_str}，{remark_text}"
 
                         if min_threshold is not None and max_threshold is not None:
                             time_prefix = f"{filter_metric_name} {format_num(min_threshold)}-{format_num(max_threshold)}，机组实际运行时间"
@@ -344,7 +346,7 @@ def render_chart_generator(
                             "description": description,
                         })
                         periods_detailed_info.append({
-                            "text": f"监测数据时间段 {index + 1}：{description}",
+                            "text": html.escape(f"监测数据时间段 {index + 1}：{description}"),
                             "color": fill_color
                         })
 

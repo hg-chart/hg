@@ -307,7 +307,7 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
                 "结束时间": item["end"],
                 "多频集速运行(s)": item.get("run_sec", "0"),
                 "多频集速停止(s)": item.get("stop_sec", "-"),
-                "备注": item.get("remark", ""),
+                "备注说明": item.get("remark", ""),
             })
 
         df_intervals = pd.DataFrame(table_data)
@@ -316,6 +316,7 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
             column_config={
                 "选择": st.column_config.CheckboxColumn("选择", required=True),
                 "序号": st.column_config.NumberColumn("序号", disabled=True),
+                "备注说明": st.column_config.TextColumn("备注说明（选填）", help="手动填写的额外说明，作图时追加在配置说明后"),
             },
             disabled=["序号"],
             hide_index=True,
@@ -339,7 +340,7 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
                             "end": e_str,
                             "run_sec": str(row["多频集速运行(s)"]).strip() or "0",
                             "stop_sec": str(row["多频集速停止(s)"]).strip() or "-",
-                            "remark": str(row.get("备注", "")).strip(),
+                            "remark": str(row.get("备注说明", "")).strip(),
                         })
                     st.session_state.intervals = new_intervals
                     st.success("修改已成功保存！")
@@ -469,16 +470,18 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
                 start_fields = _dt_row("开始", default_start, f"s_{_sid}_{_n_iv}")
                 end_fields = _dt_row("结束", default_end, f"e_{_sid}_{_n_iv}")
 
-            run_col, stop_col, remark_col, btn_col = st.columns([1.8, 1.8, 2.2, 1.2])
-            with run_col:
-                run_seconds = st.text_input("多频集速运行秒数（填 0 表示多频集速没有运行）", value=_default_run, key=f"run_sec_in_{_sid}_{_n_iv}")
-            with stop_col:
-                stop_seconds = st.text_input("停止秒数（运行秒数若为0，此项不用填）", value=_default_stop, key=f"stop_sec_in_{_sid}_{_n_iv}")
-            with remark_col:
-                remark_input = st.text_input("备注（可选，例如：喷吹0.3秒，间隔2分钟）", value="", key=f"remark_in_{_sid}_{_n_iv}")
-            with btn_col:
-                st.write("")
-                add_interval = st.form_submit_button("添加时段", use_container_width=True)
+            # 布局优化：前三个参数并排，下方按钮居右
+            param_col1, param_col2, param_col3 = st.columns([1, 1, 1.2])
+            with param_col1:
+                run_seconds = st.text_input("多频集速运行秒数（填 0 表示未运行）", value=_default_run, key=f"run_sec_in_{_sid}_{_n_iv}")
+            with param_col2:
+                stop_seconds = st.text_input("停止秒数（运行秒数为0时不用填）", value=_default_stop, key=f"stop_sec_in_{_sid}_{_n_iv}")
+            with param_col3:
+                remark_input = st.text_input("备注/补充说明（允许不填，如：喷吹0.3秒，间隔2分钟）", value="", key=f"remark_in_{_sid}_{_n_iv}")
+
+            btn_col1, btn_col2 = st.columns([3, 1])
+            with btn_col2:
+                add_interval = st.form_submit_button("➕ 添加时段", use_container_width=True)
 
             if add_interval:
                 try:

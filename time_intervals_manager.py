@@ -200,6 +200,18 @@ def _fields_to_datetime(values, name):
         raise ValueError(f"{name}不是有效的日期时间（请检查：月 1-12、该月是否有这一天、时 0-23、分和秒 0-59）")
 
 
+def _clean_remark(value):
+    """备注内容整理：空值/NaN 变成空字符串，其余去掉首尾空白。"""
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip()
+
+
 def render_time_intervals_manager(vault_dir, df_raw, time_col):
     """渲染时间段方案选择、编辑、回收站及新增时段的完整交互逻辑"""
     
@@ -307,7 +319,7 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
                 "结束时间": item["end"],
                 "多频集速运行(s)": item.get("run_sec", "0"),
                 "多频集速停止(s)": item.get("stop_sec", "-"),
-                "备注说明": item.get("remark", ""),
+                "备注": item.get("remark", ""),
             })
 
         df_intervals = pd.DataFrame(table_data)
@@ -316,7 +328,9 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
             column_config={
                 "选择": st.column_config.CheckboxColumn("选择", required=True),
                 "序号": st.column_config.NumberColumn("序号", disabled=True),
-                "备注说明": st.column_config.TextColumn("备注说明（选填）", help="手动填写的额外说明，作图时追加在配置说明后"),
+                "备注": st.column_config.TextColumn(
+                    "备注", help="选填。生成趋势图时，会显示在多频集速启停时间之后", width="large"
+                ),
             },
             disabled=["序号"],
             hide_index=True,
@@ -340,7 +354,7 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
                             "end": e_str,
                             "run_sec": str(row["多频集速运行(s)"]).strip() or "0",
                             "stop_sec": str(row["多频集速停止(s)"]).strip() or "-",
-                            "remark": str(row.get("备注说明", "")).strip(),
+                            "remark": _clean_remark(row.get("备注")),
                         })
                     st.session_state.intervals = new_intervals
                     st.success("修改已成功保存！")
@@ -470,18 +484,20 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
                 start_fields = _dt_row("开始", default_start, f"s_{_sid}_{_n_iv}")
                 end_fields = _dt_row("结束", default_end, f"e_{_sid}_{_n_iv}")
 
-            # 布局优化：前三个参数并排，下方按钮居右
-            param_col1, param_col2, param_col3 = st.columns([1, 1, 1.2])
-            with param_col1:
-                run_seconds = st.text_input("多频集速运行秒数（填 0 表示未运行）", value=_default_run, key=f"run_sec_in_{_sid}_{_n_iv}")
-            with param_col2:
-                stop_seconds = st.text_input("停止秒数（运行秒数为0时不用填）", value=_default_stop, key=f"stop_sec_in_{_sid}_{_n_iv}")
-            with param_col3:
-                remark_input = st.text_input("备注/补充说明（允许不填，如：喷吹0.3秒，间隔2分钟）", value="", key=f"remark_in_{_sid}_{_n_iv}")
+            run_col, stop_col, btn_col = st.columns([2, 2, 1.5])
+            with run_col:
+                run_seconds = st.text_input("多频集速运行秒数（填 0 表示多频集速没有运行）", value=_default_run, key=f"run_sec_in_{_sid}_{_n_iv}")
+            with stop_col:
+                stop_seconds = st.text_input("停止秒数（运行秒数若为0，此项不用填，系统自动设置为-）", value=_default_stop, key=f"stop_sec_in_{_sid}_{_n_iv}")
+            with btn_col:
+                st.write("")
+                add_interval = st.form_submit_button("添加时段", use_container_width=True)
 
-            btn_col1, btn_col2 = st.columns([3, 1])
-            with btn_col2:
-                add_interval = st.form_submit_button("➕ 添加时段", use_container_width=True)
+            remark_input = st.text_input(
+                "备注（选填，例如：喷吹0.3秒，间隔2分钟）",
+                value="",
+                key=f"remark_in_{_sid}_{_n_iv}",
+            )
 
             if add_interval:
                 try:
@@ -495,13 +511,12 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
                         end_string = end_dt.strftime("%Y-%m-%d %H:%M:%S")
                         run_text = run_seconds.strip() or "0"
                         stop_text = "-" if run_text in ("0", "0.0") else (stop_seconds.strip() or "-")
-                        remark_text = remark_input.strip()
                         st.session_state.intervals.append({
                             "start": start_string,
                             "end": end_string,
                             "run_sec": run_text,
                             "stop_sec": stop_text,
-                            "remark": remark_text,
+                            "remark": _clean_remark(remark_input),
                         })
                         st.success("时段添加成功！")
                         st.rerun()

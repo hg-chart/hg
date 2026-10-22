@@ -307,6 +307,7 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
                 "结束时间": item["end"],
                 "多频集速运行(s)": item.get("run_sec", "0"),
                 "多频集速停止(s)": item.get("stop_sec", "-"),
+                "备注": item.get("remark", ""),
             })
 
         df_intervals = pd.DataFrame(table_data)
@@ -338,6 +339,7 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
                             "end": e_str,
                             "run_sec": str(row["多频集速运行(s)"]).strip() or "0",
                             "stop_sec": str(row["多频集速停止(s)"]).strip() or "-",
+                            "remark": str(row.get("备注", "")).strip(),
                         })
                     st.session_state.intervals = new_intervals
                     st.success("修改已成功保存！")
@@ -467,11 +469,13 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
                 start_fields = _dt_row("开始", default_start, f"s_{_sid}_{_n_iv}")
                 end_fields = _dt_row("结束", default_end, f"e_{_sid}_{_n_iv}")
 
-            run_col, stop_col, btn_col = st.columns([2, 2, 1.5])
+            run_col, stop_col, remark_col, btn_col = st.columns([1.8, 1.8, 2.2, 1.2])
             with run_col:
                 run_seconds = st.text_input("多频集速运行秒数（填 0 表示多频集速没有运行）", value=_default_run, key=f"run_sec_in_{_sid}_{_n_iv}")
             with stop_col:
-                stop_seconds = st.text_input("停止秒数（运行秒数若为0，此项不用填，系统自动设置为-）", value=_default_stop, key=f"stop_sec_in_{_sid}_{_n_iv}")
+                stop_seconds = st.text_input("停止秒数（运行秒数若为0，此项不用填）", value=_default_stop, key=f"stop_sec_in_{_sid}_{_n_iv}")
+            with remark_col:
+                remark_input = st.text_input("备注（可选，例如：喷吹0.3秒，间隔2分钟）", value="", key=f"remark_in_{_sid}_{_n_iv}")
             with btn_col:
                 st.write("")
                 add_interval = st.form_submit_button("添加时段", use_container_width=True)
@@ -488,11 +492,13 @@ def render_time_intervals_manager(vault_dir, df_raw, time_col):
                         end_string = end_dt.strftime("%Y-%m-%d %H:%M:%S")
                         run_text = run_seconds.strip() or "0"
                         stop_text = "-" if run_text in ("0", "0.0") else (stop_seconds.strip() or "-")
+                        remark_text = remark_input.strip()
                         st.session_state.intervals.append({
                             "start": start_string,
                             "end": end_string,
                             "run_sec": run_text,
                             "stop_sec": stop_text,
+                            "remark": remark_text,
                         })
                         st.success("时段添加成功！")
                         st.rerun()
